@@ -11,7 +11,9 @@ const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || "";
 const WEB_APP_URL = (process.env.WEB_APP_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
 
 app.use(express.json({ limit: "100kb" }));
-app.use(express.static(path.join(__dirname, "public")));
+app.get("/", (_req, res) => res.sendFile(path.join(__dirname, "index.html")));
+app.get("/style.css", (_req, res) => res.sendFile(path.join(__dirname, "style.css")));
+app.get("/app.js", (_req, res) => res.sendFile(path.join(__dirname, "app.js")));
 
 let bot = null;
 if (BOT_TOKEN && BOT_TOKEN !== "PASTE_YOUR_TELEGRAM_BOT_TOKEN_HERE") {
@@ -104,7 +106,7 @@ app.post("/api/orders", async (req, res) => {
 app.get("/api/health", (_req, res) => res.json({ ok: true, botEnabled: Boolean(bot) }));
 
 app.get("*", (_req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
+  res.sendFile(path.join(__dirname, "index.html"));
 });
 
 app.listen(PORT, "0.0.0.0", () => {
