@@ -105,8 +105,10 @@ async function sendOrderToDriver(order, driver) {
     (order.name ? `👤 Исм: ${order.name}\n` : "") +
     (order.note ? `📝 Изоҳ: ${order.note}\n` : "") +
     (order.telegramUsername
-      ? `💬 Мижоз Telegram: ${order.telegramUsername}\n`
-      : "") +
+  ? `💬 Мижоз Telegram: https://t.me/${order.telegramUsername.replace(/^@/, "")}\n`
+  : "💬 Мижоз Telegram username киритмаган.\n")
+     
+  
     `\nСиз ${driver.slot}-навбатдаги ҳайдовчисиз.`;
 
   await bot.sendMessage(driver.id, details, {
