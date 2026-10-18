@@ -1,9 +1,10 @@
-
 require("dotenv").config();
 
 const express = require("express");
 const path = require("path");
 const TelegramBot = require("node-telegram-bot-api");
+const store = require("./store");
+const { setupAdmin, isBlocked } = require("./admin");
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -15,9 +16,16 @@ const WEB_APP_URL = (
 ).replace(/\/$/, "");
 
 app.use(express.json({ limit: "100kb" }));
+// Сервер файллари ва маълумот сайт орқали очилмаслиги учун.
+app.use(
+  ["/admin.html", "/admin.js", "/store.js", "/taxi-data.json"],
+  (_req, res) => res.sendStatus(404)
+);
 app.use(express.static(__dirname, { index: false }));
 
 const orders = new Map();
+store.loadOrders(orders);
+store.startAutosave(orders);
 const startedDrivers = new Set();
 let bot = null;
 
@@ -204,6 +212,28 @@ async function dispatchNext(order) {
   } finally {
     order.sending = false;
   }
+}
+
+// Админ буюртмани бекор қилади: гуруҳ хабари янгиланади, жорий ҳайдовчига хабар кетади.
+async function cancelOrder(order) {
+  order.cancelled = true;
+  order.finished = true;
+  order.statusText = "❌ Буюртма админ томонидан бекор қилинди.";
+
+  if (bot && order.currentDriverId) {
+    try {
+      await bot.sendMessage(
+        order.currentDriverId,
+        `❌ Буюртма ${order.orderId} бекор қилинди.`
+      );
+    } catch (err) {
+      console.error("Ҳайдовчига хабар юборилмади:", err.message);
+    }
+  }
+
+  order.currentDriverId = null;
+  order.currentSlot = null;
+  await updateGroup(order);
 }
 
 if (BOT_TOKEN) {
@@ -399,6 +429,13 @@ app.post("/api/orders", async (req, res) => {
     });
   }
 
+  if (isBlocked(phone, telegramUsername)) {
+    return res.status(403).json({
+      ok: false,
+      message: "Кечирасиз, ҳозирча буюртмангизни қабул қила олмаймиз."
+    });
+  }
+
   if (!bot || !ADMIN_CHAT_ID) {
     return res.status(500).json({
       ok: false,
@@ -444,6 +481,7 @@ app.post("/api/orders", async (req, res) => {
 
     order.messageId = sent.message_id;
     orders.set(orderId, order);
+    store.saveOrders();
 
     return res.status(201).json({
       ok: true,
@@ -470,6 +508,8 @@ app.get("/api/health", (_req, res) => {
 app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
+
+setupAdmin(app, { orders, cancelOrder });
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Такси сайти ишга тушди: порт ${PORT}`);
