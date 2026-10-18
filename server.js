@@ -27,51 +27,11 @@ function cleanText(value, maxLength = 200) {
 
 function getDriverName(user) {
   if (user.username) return `@${user.username}`;
-  return [user.first_name, user.last_name].filter(Boolean).join(" ") ||
-    `Ҳайдовчи ${user.id}`;
-}
-
-function getGroupText(order) {
-  const drivers = [1, 2, 3].map((slot) => {
-    const driver = order.slots[slot];
-    return `${slot}. ${driver ? driver.name : "⏳ Бўш"}`;
-  });
 
   return (
-    `🚕 ТАКСИ БУЮРТМАСИ\n\n` +
-    `🆔 Буюртма: ${order.orderId}\n` +
-    `📍 Қаердан: ${order.pickup}\n` +
-    `🏁 Қаерга: ${order.destination}\n\n` +
-    `👨‍✈️ Ҳайдовчилар:\n${drivers.join("\n")}\n\n` +
-    `${order.statusText}`
+    [user.first_name, user.last_name].filter(Boolean).join(" ") ||
+    `Ҳайдовчи ${user.id}`
   );
-}
-
-function getKeyboard(order) {
-  return {
-    inline_keyboard: [[1, 2, 3].map((slot) => ({
-      text: order.slots[slot]
-        ? `${slot}️⃣ ${order.slots[slot].name}`
-        : `${slot}️⃣ Ҳайдовчи`,
-      callback_data: `join:${order.orderId}:${slot}`
-    }))]
-  };
-}
-
-async function updateGroup(order) {
-  if (!bot || !order.chatId || !order.messageId) return;
-
-  try {
-    await bot.editMessageText(getGroupText(order), {
-      chat_id: order.chatId,
-      message_id: order.messageId,
-      reply_markup: getKeyboard(order)
-    });
-  } catch (err) {
-    if (!String(err.message).includes("message is not modified")) {
-      console.error("Гуруҳни янгилаш хатоси:", err.message);
-    }
-  }
 }
 
 function getCustomerTelegram(value) {
@@ -91,6 +51,54 @@ function getCustomerTelegram(value) {
   return input;
 }
 
+function getGroupText(order) {
+  const drivers = [1, 2, 3].map((slot) => {
+    const driver = order.slots[slot];
+
+    if (!driver) return `${slot}. ⏳ Бўш`;
+
+    return `${slot}. ${driver.name}`;
+  });
+
+  return (
+    `🚕 ТАКСИ БУЮРТМАСИ\n\n` +
+    `🆔 Буюртма: ${order.orderId}\n` +
+    `📍 Қаердан: ${order.pickup}\n` +
+    `🏁 Қаерга: ${order.destination}\n\n` +
+    `👨‍✈️ Ҳайдовчилар:\n${drivers.join("\n")}\n\n` +
+    `${order.statusText}`
+  );
+}
+
+function getKeyboard(order) {
+  return {
+    inline_keyboard: [
+      [1, 2, 3].map((slot) => ({
+        text: order.slots[slot]
+          ? `${slot}️⃣ ${order.slots[slot].name}`
+          : `${slot}️⃣ Ҳайдовчи`,
+        callback_data: `join:${order.orderId}:${slot}`
+      }))
+    ]
+  };
+}
+
+async function updateGroup(order) {
+  if (!bot || !order.chatId || !order.messageId) return;
+
+  try {
+    await bot.editMessageText(getGroupText(order), {
+      chat_id: order.chatId,
+      message_id: order.messageId,
+      reply_markup: getKeyboard(order)
+    });
+  } catch (err) {
+    if (!String(err.message).includes("message is not modified")) {
+      console.error("Гуруҳни янгилаш хатоси:", err.message);
+    }
+  }
+}
+
 async function sendOrderToDriver(order, driver) {
   const details =
     `🚕 СИЗГА БУЮРТМА БЕРИЛДИ\n\n` +
@@ -105,56 +113,94 @@ async function sendOrderToDriver(order, driver) {
 
   await bot.sendMessage(driver.id, details, {
     reply_markup: {
-      inline_keyboard: [[{
-        text: "➡️ Кейинги ҳайдовчига ўтказиш",
-        callback_data: `next:${order.orderId}`
-      }]]
+      inline_keyboard: [
+        [
+          {
+            text: "➡️ Кейинги ҳайдовчига ўтказиш",
+            callback_data: `next:${order.orderId}`
+          }
+        ]
+      ]
     }
   });
 }
 
+// Фақат ҳали ишлов берилмаган ҳайдовчига буюртма юборади.
+// Кейинги ҳайдовчи ҳали навбат олмаган бўлса, буюртма очиқ қолади.
 async function dispatchNext(order) {
-  if (order.sending || order.finished) return;
+  if (
+    order.sending ||
+    order.finished ||
+    order.currentDriverId
+  ) {
+    return;
+  }
+
   order.sending = true;
 
   try {
-    // Навбат доимо 1, кейин 2, кейин 3 бўйича.
-    while (order.currentIndex + 1 < order.queue.length) {
-      order.currentIndex += 1;
-      const driver = order.queue[order.currentIndex];
+    while (true) {
+      const slot = [1, 2, 3].find(
+        (n) =>
+          order.slots[n] &&
+          !order.processedSlots.has(n)
+      );
+
+      if (!slot) {
+        const allSlotsFilled = [1, 2, 3].every(
+          (n) => Boolean(order.slots[n])
+        );
+
+        const allProcessed = [1, 2, 3].every(
+          (n) => order.processedSlots.has(n)
+        );
+
+        if (allSlotsFilled && allProcessed) {
+          order.finished = true;
+          order.statusText = "🏁 Барча ҳайдовчилар навбати тугади.";
+        } else {
+          order.finished = false;
+          order.statusText = "🟢 Кейинги ҳайдовчи кутилмоқда.";
+        }
+
+        await updateGroup(order);
+        return;
+      }
+
+      const driver = order.slots[slot];
 
       if (!startedDrivers.has(driver.id)) {
+        order.processedSlots.add(slot);
         order.statusText =
-          `⚠️ ${driver.name} ботда /start босмаган. Унинг навбати ўтказиб юборилди.`;
+          `⚠️ ${driver.name} ботда /start босмаган. Навбати ўтказилди.`;
+
         await updateGroup(order);
         continue;
       }
 
       try {
         await sendOrderToDriver(order, driver);
+
+        order.currentSlot = slot;
         order.currentDriverId = driver.id;
-        order.statusText = `🚕 Буюртма ${driver.name} га юборилди`;
+        order.statusText = `🚕 Буюртма ${driver.name} га юборилди.`;
+
         await updateGroup(order);
         return;
       } catch (err) {
-        console.error("Ҳайдовчига хабар юборилмади:", driver.name, err.message);
+        console.error(
+          "Ҳайдовчига хабар юборилмади:",
+          driver.name,
+          err.message
+        );
+
+        order.processedSlots.add(slot);
         order.statusText =
           `⚠️ ${driver.name} га хабар бормади. Кейинги ҳайдовчи текширилмоқда.`;
+
         await updateGroup(order);
       }
     }
-
-    order.currentDriverId = null;
-
-    if (order.queue.length === 0) {
-      order.statusText = "🟢 Ҳайдовчилар кутилмоқда";
-      order.finished = false;
-    } else {
-      order.statusText = "🏁 Барча танланган ҳайдовчилар навбати тугади.";
-      order.finished = true;
-    }
-
-    await updateGroup(order);
   } finally {
     order.sending = false;
   }
@@ -172,13 +218,23 @@ if (BOT_TOKEN) {
       await bot.sendMessage(
         msg.chat.id,
         "Ассалому алайкум! 🚕\n\n" +
-        "Такси буюртма ботига хуш келибсиз.\n" +
-        "Ҳайдовчи бўлсангиз, шахсий буюртма олиш учун /start босинг.",
+          "Такси буюртма ботига хуш келибсиз.\n" +
+          "Ҳайдовчи бўлсангиз, буюртма олиш учун /start босинг.",
         {
           reply_markup: {
             inline_keyboard: [
-              [{ text: "🚕 Буюртма бериш", web_app: { url: WEB_APP_URL } }],
-              [{ text: "🌐 Сайтни очиш", url: WEB_APP_URL }]
+              [
+                {
+                  text: "🚕 Буюртма бериш",
+                  web_app: { url: WEB_APP_URL }
+                }
+              ],
+              [
+                {
+                  text: "🌐 Сайтни очиш",
+                  url: WEB_APP_URL
+                }
+              ]
             ]
           }
         }
@@ -200,6 +256,7 @@ if (BOT_TOKEN) {
         return;
       }
 
+      // Ҳайдовчи 1-, 2- ёки 3-навбатни танлайди.
       if (data.startsWith("join:")) {
         const [, orderId, slotText] = data.split(":");
         const slot = Number(slotText);
@@ -207,7 +264,7 @@ if (BOT_TOKEN) {
 
         if (!order) {
           await bot.answerCallbackQuery(query.id, {
-            text: "Буюртма топилмади. Янги буюртмада синаб кўринг."
+            text: "Буюртма топилмади."
           });
           return;
         }
@@ -233,9 +290,11 @@ if (BOT_TOKEN) {
           return;
         }
 
-        if (Object.values(order.slots).some(
-          (driver) => driver && driver.id === user.id
-        )) {
+        if (
+          Object.values(order.slots).some(
+            (driver) => driver && driver.id === user.id
+          )
+        ) {
           await bot.answerCallbackQuery(query.id, {
             text: "Сиз бу буюртмада аллақачон навбат олгансиз."
           });
@@ -248,24 +307,21 @@ if (BOT_TOKEN) {
           slot
         };
 
-        // Танланган ҳайдовчилар рўйхати навбат бўйича қайта тузилади.
-        order.queue = [1, 2, 3]
-          .filter((n) => order.slots[n])
-          .map((n) => order.slots[n]);
-
         await bot.answerCallbackQuery(query.id, {
           text: `${slot}-навбат сизга бириктирилди.`
         });
 
         await updateGroup(order);
 
-        if (order.slots[1] && order.currentIndex === -1) {
+        // Биринчи навбат олинмагунча буюртма тарқатилмайди.
+        if (order.slots[1] && !order.currentDriverId) {
           await dispatchNext(order);
         }
 
         return;
       }
 
+      // Ҳозирги ҳайдовчи буюртмани кейингига ўтказади.
       if (data.startsWith("next:")) {
         const orderId = data.slice(5);
         const order = orders.get(orderId);
@@ -285,17 +341,26 @@ if (BOT_TOKEN) {
         }
 
         await bot.answerCallbackQuery(query.id, {
-          text: "Кейинги ҳайдовчига ўтказилмоқда."
+          text: "Кейинги ҳайдовчи текширилмоқда."
         });
 
+        if (order.currentSlot !== null) {
+          order.processedSlots.add(order.currentSlot);
+        }
+
+        order.currentSlot = null;
         order.currentDriverId = null;
+
         await dispatchNext(order);
         return;
       }
 
       await bot.answerCallbackQuery(query.id);
     } catch (err) {
-      console.error("Тугма хатоси:", err.stack || err.message);
+      console.error(
+        "Тугма хатоси:",
+        err.stack || err.message
+      );
 
       try {
         await bot.answerCallbackQuery(query.id, {
@@ -315,20 +380,30 @@ if (BOT_TOKEN) {
 }
 
 app.post("/api/orders", async (req, res) => {
-  const name = cleanText(req.body.name, 80);
-  const phone = cleanText(req.body.phone, 40);
-  const pickup = cleanText(req.body.pickup, 200);
-  const destination = cleanText(req.body.destination, 200);
-  const note = cleanText(req.body.note, 500);
+  const body = req.body || {};
+
+  const name = cleanText(body.name, 80);
+  const phone = cleanText(body.phone, 40);
+  const pickup = cleanText(body.pickup, 200);
+  const destination = cleanText(body.destination, 200);
+  const note = cleanText(body.note, 500);
   const telegramUsername = cleanText(
-    req.body.telegramUsername || req.body.telegram,
+    body.telegramUsername || body.telegram,
     200
   );
 
   if (!phone || !pickup || !destination) {
     return res.status(400).json({
       ok: false,
-      message: "Телефон рақами, қаердан ва қаерга майдонларини тўлдиринг."
+      message:
+        "Телефон рақами, қаердан ва қаерга майдонларини тўлдиринг."
+    });
+  }
+
+  if (!bot || !ADMIN_CHAT_ID) {
+    return res.status(500).json({
+      ok: false,
+      message: "Бот ёки гуруҳ созламаси топилмади."
     });
   }
 
@@ -342,27 +417,24 @@ app.post("/api/orders", async (req, res) => {
     destination,
     note,
     telegramUsername,
-    slots: { 1: null, 2: null, 3: null },
-    queue: [],
-    chatId: ADMIN_CHAT_ID,
-    messageId: null,
-    currentIndex: -1,
+
+    slots: {
+      1: null,
+      2: null,
+      3: null
+    },
+
+    processedSlots: new Set(),
+    currentSlot: null,
     currentDriverId: null,
     sending: false,
     finished: false,
+
+    chatId: ADMIN_CHAT_ID,
+    messageId: null,
     statusText: "🟢 Ҳайдовчилар кутилмоқда",
     createdAt: new Date().toISOString()
   };
-
-  orders.set(orderId, order);
-
-  if (!bot || !ADMIN_CHAT_ID) {
-    orders.delete(orderId);
-    return res.status(500).json({
-      ok: false,
-      message: "Бот ёки гуруҳ созламаси топилмади."
-    });
-  }
 
   try {
     const sent = await bot.sendMessage(
@@ -372,8 +444,14 @@ app.post("/api/orders", async (req, res) => {
     );
 
     order.messageId = sent.message_id;
+    orders.set(orderId, order);
+
+    return res.status(201).json({
+      ok: true,
+      orderId,
+      message: "Буюртмангиз қабул қилинди!"
+    });
   } catch (err) {
-    orders.delete(orderId);
     console.error("Гуруҳга буюртма юборилмади:", err.message);
 
     return res.status(502).json({
@@ -381,27 +459,16 @@ app.post("/api/orders", async (req, res) => {
       message: "Буюртма гуруҳга юборилмади. Қайта уриниб кўринг."
     });
   }
-
-  return res.status(201).json({
-    ok: true,
-    orderId,
-    message: "Буюртмангиз қабул қилинди!"
-  });
 });
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, botEnabled: Boolean(bot) });
+  res.json({
+    ok: true,
+    botEnabled: Boolean(bot)
+  });
 });
 
 app.get("/", (_req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
-});
-
-app.get("*", (req, res) => {
-  if (req.path === "/style.css" || req.path === "/app.js") {
-    return res.status(404).send("Файл топилмади");
-  }
-
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
