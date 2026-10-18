@@ -11,18 +11,16 @@ const BOT_TOKEN = process.env.BOT_TOKEN || "";
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || "";
 const WEB_APP_URL = (
   process.env.WEB_APP_URL ||
-  `http://localhost:${PORT}`
+  "https://taxi-booking-bot-pb3t.onrender.com"
 ).replace(/\/$/, "");
 
 app.use(express.json({ limit: "100kb" }));
 app.use(express.static(__dirname, { index: false }));
 
-let bot = null;
-
-// Xotirada saqlanadi. Server qayta ishga tushsa,
-// eski buyurtmalar va haydovchilar navbati yo'qoladi.
 const orders = new Map();
 const startedDrivers = new Set();
+
+let bot = null;
 
 function cleanText(value, maxLength = 200) {
   return String(value || "").trim().slice(0, maxLength);
@@ -35,7 +33,7 @@ function getDriverName(user) {
     .filter(Boolean)
     .join(" ");
 
-  return name || `Haydovchi ${user.id}`;
+  return name || `Ҳайдовчи ${user.id}`;
 }
 
 function getQueue(order) {
@@ -50,17 +48,17 @@ function getQueue(order) {
 function getGroupText(order) {
   const drivers = [1, 2, 3].map((slot) => {
     const driver = order.slots[slot];
-    return `${slot}. ${driver ? driver.name : "⏳ Bo'sh"}`;
+    return `${slot}. ${driver ? driver.name : "⏳ Бўш"}`;
   });
 
   return (
-    `🚕 TAKSI BUYURTMASI\n\n` +
-    `🆔 Buyurtma: ${order.orderId}\n` +
-    `📍 Qayerdan: ${order.pickup}\n` +
-    `🏁 Qayerga: ${order.destination}\n\n` +
-    `👨‍✈️ Haydovchilar navbati:\n` +
+    `🚕 ТАКСИ БУЮРТМАСИ\n\n` +
+    `🆔 Буюртма: ${order.orderId}\n` +
+    `📍 Қаердан: ${order.pickup}\n` +
+    `🏁 Қаерга: ${order.destination}\n\n` +
+    `👨‍✈️ Ҳайдовчилар навбати:\n` +
     drivers.join("\n") +
-    `\n\n${order.statusText || "🟢 Haydovchilar kutilmoqda"}`
+    `\n\n${order.statusText || "🟢 Ҳайдовчилар кутилмоқда"}`
   );
 }
 
@@ -73,7 +71,7 @@ function getKeyboard(order) {
         return {
           text: driver
             ? `${slot}️⃣ ${driver.name}`
-            : `${slot}️⃣ Haydovchi`,
+            : `${slot}️⃣ Ҳайдовчи`,
           callback_data: `join:${order.orderId}:${slot}`
         };
       })
@@ -91,40 +89,35 @@ async function updateGroup(order) {
       reply_markup: getKeyboard(order)
     });
   } catch (err) {
-    // Xabar o'zgarmagan bo'lsa Telegram xato qaytarishi mumkin.
     if (!String(err.message).includes("message is not modified")) {
-      console.error("Guruh xabarini yangilash xatosi:", err.message);
+      console.error("Гуруҳ хабарини янгилаш хатоси:", err.message);
     }
   }
 }
 
-async function sendOrderToDriver(order, queueItem) {
-  const driver = queueItem;
-
+async function sendOrderToDriver(order, driver) {
   const details =
-    `🚕 SIZGA BUYURTMA BERILDI\n\n` +
-    `🆔 Buyurtma: ${order.orderId}\n` +
-    `👤 Mijoz: ${order.name}\n` +
-    `📞 Telefon: ${order.phone}\n` +
-    `📍 Qayerdan: ${order.pickup}\n` +
-    `🏁 Qayerga: ${order.destination}\n` +
-    (order.note ? `📝 Izoh: ${order.note}\n` : "") +
+    `🚕 СИЗГА БУЮРТМА БЕРИЛДИ\n\n` +
+    `🆔 Буюртма: ${order.orderId}\n` +
+    `📞 Телефон: ${order.phone}\n` +
+    `📍 Қаердан: ${order.pickup}\n` +
+    `🏁 Қаерга: ${order.destination}\n` +
+    (order.name ? `👤 Исм: ${order.name}\n` : "") +
+    (order.note ? `📝 Изоҳ: ${order.note}\n` : "") +
     (order.telegramUsername
-      ? `💬 Mijoz Telegrami: @${order.telegramUsername.replace(/^@/, "")}\n`
+      ? `💬 Мижоз Telegram: ${order.telegramUsername}\n`
       : "") +
-    `\nSiz ${driver.slot}-navbatdagi haydovchisiz.`;
-
-  const keyboard = {
-    inline_keyboard: [[
-      {
-        text: "➡️ Keyingi haydovchiga o‘tkazish",
-        callback_data: `next:${order.orderId}`
-      }
-    ]]
-  };
+    `\nСиз ${driver.slot}-навбатдаги ҳайдовчисиз.`;
 
   await bot.sendMessage(driver.id, details, {
-    reply_markup: keyboard
+    reply_markup: {
+      inline_keyboard: [[
+        {
+          text: "➡️ Кейинги ҳайдовчига ўтказиш",
+          callback_data: `next:${order.orderId}`
+        }
+      ]]
+    }
   });
 }
 
@@ -135,12 +128,11 @@ async function dispatchNext(order) {
 
   while (order.currentIndex + 1 < queue.length) {
     order.currentIndex += 1;
-
     const driver = queue[order.currentIndex];
 
     if (!startedDrivers.has(driver.id)) {
       order.statusText =
-        `⚠️ ${driver.name} botda /start bosmagan. Keyingi haydovchi kutilmoqda.`;
+        `⚠️ ${driver.name} ботда /start босмаган.`;
       await updateGroup(order);
       continue;
     }
@@ -151,61 +143,70 @@ async function dispatchNext(order) {
       await sendOrderToDriver(order, driver);
 
       order.currentDriverId = driver.id;
-      order.statusText = `🚕 Buyurtma ${driver.name} ga yuborildi`;
-      await updateGroup(order);
+      order.statusText = `🚕 Буюртма ${driver.name} га юборилди`;
       order.sending = false;
+      await updateGroup(order);
       return;
     } catch (err) {
-      console.error("Haydovchiga shaxsiy xabar yuborilmadi:", err.message);
+      console.error(
+        "Ҳайдовчига шахсий хабар юборилмади:",
+        driver.name,
+        err.message
+      );
 
       order.statusText =
-        `⚠️ ${driver.name} ga xabar yuborilmadi. Keyingi haydovchi tekshirilmoqda.`;
-      await updateGroup(order);
+        `⚠️ ${driver.name} га хабар юборилмади. Кейинги навбат текширилмоқда.`;
+
       order.sending = false;
+      await updateGroup(order);
     }
   }
 
   order.currentDriverId = null;
   order.finished = true;
-  order.statusText = "🏁 Navbat tugadi yoki hozircha haydovchi yo‘q.";
+  order.statusText = "🏁 Навбат тугади ёки ҳозирча ҳайдовчи йўқ.";
   await updateGroup(order);
 }
 
-if (BOT_TOKEN && BOT_TOKEN !== "PASTE_YOUR_TELEGRAM_BOT_TOKEN_HERE") {
+if (BOT_TOKEN) {
   bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
   bot.onText(/^\/start(?:\s.*)?$/, async (msg) => {
-    if (msg.from) startedDrivers.add(msg.from.id);
-
-    const keyboard = {
-      inline_keyboard: [
-        [{ text: "🚕 Buyurtma berish", web_app: { url: WEB_APP_URL } }],
-        [{ text: "🌐 Saytni ochish", url: WEB_APP_URL }]
-      ]
-    };
-
-    const welcome =
-      "Assalomu alaykum! 🚕\n\n" +
-      "Taxi Booking botiga xush kelibsiz.\n" +
-      "Haydovchi bo‘lsangiz, buyurtmalarni shaxsiy qabul qilish uchun " +
-      "ushbu botda /start ni bosib qo‘ying.\n\n" +
-      "Buyurtma berish uchun quyidagi tugmani bosing.";
+    if (msg.from && msg.chat.type === "private") {
+      startedDrivers.add(msg.from.id);
+    }
 
     try {
-      await bot.sendMessage(msg.chat.id, welcome, {
-        reply_markup: keyboard
-      });
+      await bot.sendMessage(
+        msg.chat.id,
+        "Ассалому алайкум! 🚕\n\n" +
+        "Такси буюртма ботига хуш келибсиз.\n" +
+        "Ҳайдовчи бўлсангиз, шахсий хабарларни олиш учун " +
+        "ушбу ботда /start босиб қўйинг.",
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "🚕 Буюртма бериш", web_app: { url: WEB_APP_URL } }],
+              [{ text: "🌐 Сайтни очиш", url: WEB_APP_URL }]
+            ]
+          }
+        }
+      );
     } catch (err) {
-      console.error("/start xatosi:", err.message);
+      console.error("/start хатоси:", err.message);
     }
   });
 
   bot.onText(/^\/help$/, async (msg) => {
-    await bot.sendMessage(
-      msg.chat.id,
-      "Buyurtma berish uchun /start ni bosing. " +
-      "Haydovchilar ham shaxsiy xabar olish uchun /start bosishlari kerak."
-    ).catch((err) => console.error("/help xatosi:", err.message));
+    try {
+      await bot.sendMessage(
+        msg.chat.id,
+        "Буюртма бериш учун /start ни босинг.\n" +
+        "Ҳайдовчилар шахсий буюртма олиш учун ботда /start босишлари керак."
+      );
+    } catch (err) {
+      console.error("/help хатоси:", err.message);
+    }
   });
 
   bot.on("callback_query", async (query) => {
@@ -213,6 +214,13 @@ if (BOT_TOKEN && BOT_TOKEN !== "PASTE_YOUR_TELEGRAM_BOT_TOKEN_HERE") {
     const user = query.from;
 
     try {
+      if (!user || !user.id) {
+        await bot.answerCallbackQuery(query.id, {
+          text: "Ҳайдовчи маълумоти топилмади."
+        });
+        return;
+      }
+
       if (data.startsWith("join:")) {
         const parts = data.split(":");
         const orderId = parts[1];
@@ -221,48 +229,52 @@ if (BOT_TOKEN && BOT_TOKEN !== "PASTE_YOUR_TELEGRAM_BOT_TOKEN_HERE") {
 
         if (!order) {
           await bot.answerCallbackQuery(query.id, {
-            text: "Buyurtma topilmadi yoki server qayta ishga tushgan."
+            text: "Буюртма топилмади. Сервер қайта ишга тушган бўлиши мумкин."
           });
           return;
         }
 
         if (![1, 2, 3].includes(slot)) {
           await bot.answerCallbackQuery(query.id, {
-            text: "Noto‘g‘ri navbat."
+            text: "Навбат рақами нотўғри."
+          });
+          return;
+        }
+
+        if (order.finished) {
+          await bot.answerCallbackQuery(query.id, {
+            text: "Бу буюртма якунланган."
           });
           return;
         }
 
         if (order.slots[slot]) {
           await bot.answerCallbackQuery(query.id, {
-            text: "Bu navbatni boshqa haydovchi olgan."
+            text: "Бу навбатни бошқа ҳайдовчи олган."
           });
           return;
         }
 
-        if (Object.values(order.slots).some((d) => d.id === user.id)) {
+        if (Object.values(order.slots).some(
+          (driver) => driver && driver.id === user.id
+        )) {
           await bot.answerCallbackQuery(query.id, {
-            text: "Siz bu buyurtmada allaqachon navbat olgansiz."
+            text: "Сиз бу буюртмада аллақачон навбат олгансиз."
           });
           return;
         }
 
-        const driver = {
+        order.slots[slot] = {
           id: user.id,
           name: getDriverName(user)
         };
 
-        order.slots[slot] = driver;
-        startedDrivers.add(user.id);
-
         await bot.answerCallbackQuery(query.id, {
-          text: `${slot}-navbat sizga biriktirildi.`
+          text: `${slot}-навбат сизга бириктирилди.`
         });
 
         await updateGroup(order);
 
-        // 1-navbat olinmaguncha buyurtma shaxsiy yuborilmaydi.
-        // 1-navbat olingach, haydovchilarga navbat bo'yicha yuboriladi.
         if (order.slots[1] && order.currentIndex === -1) {
           await dispatchNext(order);
         }
@@ -276,48 +288,46 @@ if (BOT_TOKEN && BOT_TOKEN !== "PASTE_YOUR_TELEGRAM_BOT_TOKEN_HERE") {
 
         if (!order) {
           await bot.answerCallbackQuery(query.id, {
-            text: "Buyurtma topilmadi."
+            text: "Буюртма топилмади."
           });
           return;
         }
 
         if (order.currentDriverId !== user.id) {
           await bot.answerCallbackQuery(query.id, {
-            text: "Bu buyurtmani hozir boshqa haydovchi olib turibdi."
+            text: "Ҳозир бу буюртма сизда эмас."
           });
           return;
         }
 
-        order.statusText = `${getDriverName(user)} buyurtmani keyingi haydovchiga uzatdi.`;
-        order.currentDriverId = null;
-
         await bot.answerCallbackQuery(query.id, {
-          text: "Keyingi haydovchiga uzatilmoqda."
+          text: "Кейинги ҳайдовчига ўтказилмоқда."
         });
 
+        order.currentDriverId = null;
         await dispatchNext(order);
         return;
       }
 
       await bot.answerCallbackQuery(query.id);
     } catch (err) {
-      console.error("Tugma ishlash xatosi:", err.message);
+      console.error("Тугма ишлаш хатоси:", err.stack || err.message);
 
       try {
         await bot.answerCallbackQuery(query.id, {
-          text: "Xatolik yuz berdi. Qayta urinib ko‘ring."
+          text: "Хатолик юз берди. Қайта уриниб кўринг."
         });
       } catch (_) {}
     }
   });
 
   bot.on("polling_error", (err) => {
-    console.error("Telegram polling xatosi:", err.message);
+    console.error("Telegram polling хатоси:", err.message);
   });
 
-  console.log("Telegram bot ishga tushdi.");
+  console.log("Telegram бот ишга тушди.");
 } else {
-  console.warn("BOT_TOKEN yo‘q. Telegram bot o‘chirilgan.");
+  console.warn("BOT_TOKEN йўқ. Telegram бот ўчирилган.");
 }
 
 app.post("/api/orders", async (req, res) => {
@@ -326,12 +336,12 @@ app.post("/api/orders", async (req, res) => {
   const pickup = cleanText(req.body.pickup, 200);
   const destination = cleanText(req.body.destination, 200);
   const note = cleanText(req.body.note, 500);
-  const telegramUsername = cleanText(req.body.telegramUsername, 80);
+  const telegramUsername = cleanText(req.body.telegramUsername, 200);
 
-  if (!name || !phone || !pickup || !destination) {
+  if (!phone || !pickup || !destination) {
     return res.status(400).json({
       ok: false,
-      message: "Barcha majburiy maydonlarni to‘ldiring."
+      message: "Телефон рақами, қаердан ва қаерга майдонларини тўлдиринг."
     });
   }
 
@@ -352,7 +362,7 @@ app.post("/api/orders", async (req, res) => {
     currentDriverId: null,
     sending: false,
     finished: false,
-    statusText: "🟢 Haydovchilar kutilmoqda",
+    statusText: "🟢 Ҳайдовчилар кутилмоқда",
     createdAt: new Date().toISOString()
   };
 
@@ -360,7 +370,6 @@ app.post("/api/orders", async (req, res) => {
 
   if (bot && ADMIN_CHAT_ID) {
     try {
-      // Guruhga mijozning shaxsiy ma'lumotlari yuborilmaydi.
       const sent = await bot.sendMessage(
         ADMIN_CHAT_ID,
         getGroupText(order),
@@ -369,30 +378,45 @@ app.post("/api/orders", async (req, res) => {
 
       order.messageId = sent.message_id;
     } catch (err) {
-      console.error("Guruhga buyurtma yuborilmadi:", err.message);
+      console.error("Гуруҳга буюртма юборилмади:", err.message);
+
+      return res.status(502).json({
+        ok: false,
+        message: "Буюртма гуруҳга юборилмади. Илтимос, қайта урининг."
+      });
     }
+  } else {
+    return res.status(500).json({
+      ok: false,
+      message: "Бот ёки гуруҳ созламаси топилмади."
+    });
   }
 
-  console.log("Yangi buyurtma qabul qilindi:", orderId);
+  console.log("Янги буюртма қабул қилинди:", orderId);
 
   return res.status(201).json({
     ok: true,
     orderId,
-    message: "Buyurtmangiz qabul qilindi!"
+    message: "Буюртмангиз қабул қилинди!"
   });
 });
 
 app.get("/api/health", (_req, res) => {
-  res.json({
-    ok: true,
-    botEnabled: Boolean(bot)
-  });
+  res.json({ ok: true, botEnabled: Boolean(bot) });
 });
 
-app.get("*", (_req, res) => {
+app.get("/", (_req, res) => {
+  res.sendFile(path.join(__dirname, "index.html"));
+});
+
+app.get("*", (req, res) => {
+  if (req.path === "/style.css" || req.path === "/app.js") {
+    return res.status(404).send("Файл топилмади");
+  }
+
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Taxi Booking ishga tushdi: port ${PORT}`);
+  console.log(`Такси сайти ишга тушди: порт ${PORT}`);
 });
