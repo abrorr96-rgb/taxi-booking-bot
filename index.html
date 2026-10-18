@@ -1,46 +1,47 @@
+
 <!DOCTYPE html>
-<html lang="uz">
+<html lang="uz-Cyrl">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Taksi buyurtmasi</title>
+  <title>Такси буюртмаси</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <main class="page">
     <form id="orderForm" class="card" novalidate>
-      <h1>🚖 Taksi buyurtmasi</h1>
+      <h1>🚖 Такси буюртмаси</h1>
 
       <label class="field">
-        <span class="label">📍 Qayerdan? <b>*</b></span>
-        <input id="pickup" type="text" placeholder="Masalan: Andijon" maxlength="200" required>
+        <span class="label">📍 Қаердан? <b>*</b></span>
+        <input id="pickup" type="text" placeholder="Масалан: Андижон" maxlength="200" required>
       </label>
 
       <label class="field">
-        <span class="label">🏁 Qayerga? <b>*</b></span>
-        <input id="destination" type="text" placeholder="Masalan: Toshkent" maxlength="200" required>
+        <span class="label">🏁 Қаерга? <b>*</b></span>
+        <input id="destination" type="text" placeholder="Масалан: Тошкент" maxlength="200" required>
       </label>
 
       <label class="field">
-        <span class="label">📞 Telefon raqami <b>*</b></span>
+        <span class="label">📞 Телефон рақами <b>*</b></span>
         <input id="phone" type="tel" inputmode="tel" placeholder="+998 90 123 45 67" maxlength="40" required>
       </label>
 
       <label class="field">
-        <span class="label">📝 Izoh (ixtiyoriy)</span>
-        <textarea id="note" rows="2" placeholder="Masalan: 2 ta odam, yuk bor..." maxlength="500"></textarea>
+        <span class="label">📝 Изоҳ (ихтиёрий)</span>
+        <textarea id="note" rows="2" placeholder="Масалан: 2 та одам, юк бор..." maxlength="500"></textarea>
       </label>
 
       <label class="field">
-        <span class="label">💬 Telegram @username yoki profil havolasi (ixtiyoriy)</span>
+        <span class="label">💬 Телеграм @username ёки профиль ҳаволаси (ихтиёрий)</span>
         <input id="telegram" type="text" placeholder="@username" maxlength="80">
       </label>
 
-      <button id="submitBtn" type="submit">🚖 Buyurtma berish ➔</button>
+      <button id="submitBtn" type="submit">🚖 Буюртма бериш ➔</button>
 
       <p id="status" class="status" role="status" aria-live="polite"></p>
-      <p class="hint">* Majburiy maydonlar. Username va izohni to‘ldirish shart emas.</p>
+      <p class="hint">* Мажбурий майдонлар. Username ва изоҳни тўлдириш шарт эмас.</p>
     </form>
   </main>
 
