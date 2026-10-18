@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta
+    name="description"
+    content="Taxi Booking — taksi buyurtma qilish xizmati. Manzilingizni kiriting va buyurtma yuboring."
+  >
+  <title>Taxi Booking — Taksi buyurtma qilish</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="container">
+      <a class="brand" href="/" aria-label="Taxi Booking bosh sahifa">
+        <span class="brand-icon">🚕</span>
+        <span>Taxi Booking</span>
+      </a>
+
+      <a class="button button-small" href="#booking">
+        Buyurtma berish
+      </a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="container hero-content">
+        <div class="hero-text">
+          <span class="eyebrow">🚕 Qulay va ishonchli xizmat</span>
+
+          <h1>Manzilingizni tanlang, qolganini biz hal qilamiz.</h1>
+
+          <p>
+            Taksi buyurtma qilish endi oson. Ma’lumotlaringizni kiriting,
+            buyurtmangizni yuboring va operator siz bilan bog‘lanadi.
+          </p>
+
+          <a class="button" href="#booking">
+            Taksi buyurtma qilish <span>→</span>
+          </a>
+
+          <div class="hero-benefits">
+            <span>✓ Oson buyurtma</span>
+            <span>✓ Tez aloqa</span>
+          </div>
+        </div>
+
+        <div class="hero-card">
+          <div class="hero-card-icon">🚖</div>
+          <h2>Safaringiz shu yerdan boshlanadi</h2>
+          <p>Qayerdan va qayerga borishingizni kiriting.</p>
+
+          <div class="route-preview">
+            <div class="route-point">
+              <span class="route-dot"></span>
+              <div>
+                <small>Olib ketish manzili</small>
+                <strong>Siz turgan joy</strong>
+              </div>
+            </div>
+
+            <div class="route-line"></div>
+
+            <div class="route-point">
+              <span class="route-dot destination-dot"></span>
+              <div>
+                <small>Borish manzili</small>
+                <strong>Sizning manzilingiz</strong>
+              </div>
+            </div>
+          </div>
+
+          <a class="text-link" href="#booking">
+            Hozir buyurtma berish →
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <section class="features">
+      <div class="container">
+        <div class="section-heading">
+          <h2>Nega Taxi Booking?</h2>
+          <p>Siz uchun qulay buyurtma berish jarayoni.</p>
+        </div>
+
+        <div class="features-grid">
+          <article class="feature-card">
+            <div class="feature-icon">⚡</div>
+            <h3>Oson buyurtma</h3>
+            <p>Kerakli ma’lumotlarni kiriting va buyurtmani yuboring.</p>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-icon">📍</div>
+            <h3>Manzillar aniq</h3>
+            <p>Olib ketish va borish manzillarini ko‘rsating.</p>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-icon">💬</div>
+            <h3>Operator bilan aloqa</h3>
+            <p>Buyurtmangizdan so‘ng operator siz bilan bog‘lanadi.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="booking-section" id="booking">
+      <div class="container booking-layout">
+        <div class="booking-info">
+          <span class="eyebrow">BUYURTMA BERISH</span>
+          <h2>Safaringizni rejalashtiring</h2>
+          <p>
+            Quyidagi formani to‘ldiring. Yulduzcha (*) bilan belgilangan
+            maydonlarni to‘ldirish majburiy.
+          </p>
+
+          <div class="contact-note">
+            <span>📞</span>
+            <div>
+              <strong>Operator siz bilan bog‘lanadi</strong>
+              <p>Telefon raqamingizni to‘g‘ri kiriting.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="booking-form">
+          <h2>Taksi buyurtmasi</h2>
+          <p class="form-description">Ma’lumotlaringizni kiriting</p>
+
+          <form id="order-form">
+            <div class="form-group">
+              <label for="name">Ismingiz *</label>
+              <input
+                type="text"
+                id="name"
+                name="name"
+                placeholder="Ismingizni kiriting"
+                maxlength="80"
+                autocomplete="name"
+                required
+              >
+            </div>
+
+            <div class="form-group">
+              <label for="phone">Telefon raqamingiz *</label>
+              <input
+                type="tel"
+                id="phone"
+                name="phone"
+                placeholder="+998 90 123 45 67"
+                maxlength="40"
+                autocomplete="tel"
+                required
+              >
+            </div>
+
+            <div class="form-group">
+              <label for="pickup">Qayerdan olib ketish kerak? *</label>
+              <input
+                type="text"
+                id="pickup"
+                name="pickup"
+                placeholder="Boshlang‘ich manzil"
+                maxlength="200"
+                required
+              >
+            </div>
+
+            <div class="form-group">
+              <label for="destination">Qayerga borasiz? *</label>
+              <input
+                type="text"
+                id="destination"
+                name="destination"
+                placeholder="Borish manzili"
+                maxlength="200"
+                required
+              >
+            </div>
+
+            <div class="form-group">
+              <label for="telegramUsername">Telegram username (ixtiyoriy)</label>
+              <input
+                type="text"
+                id="telegramUsername"
+                name="telegramUsername"
+                placeholder="@username"
+                maxlength="80"
+              >
+            </div>
+
+            <div class="form-group">
+              <label for="note">Qo‘shimcha izoh (ixtiyoriy)</label>
+              <textarea
+                id="note"
+                name="note"
+                placeholder="Masalan, qo‘shimcha ma’lumot..."
+                maxlength="500"
+                rows="3"
+              ></textarea>
+            </div>
+
+            <button type="submit" id="submit-button">
+              Buyurtmani yuborish <span>→</span>
+            </button>
+
+            <div
+              id="form-message"
+              class="form-message"
+              role="status"
+              aria-live="polite"
+            ></div>
+
+            <p class="form-privacy">
+              Buyurtma yuborish orqali operator siz bilan bog‘lanishiga rozilik bildirasiz.
+            </p>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <section class="telegram-banner">
+      <div class="container telegram-content">
+        <div>
+          <h2>Telegram orqali ham bog‘laning</h2>
+          <p>Telegram botimiz orqali xizmatdan foydalanishingiz mumkin.</p>
+        </div>
+
+        <a
+          class="button telegram-button"
+          id="telegram-link"
+          href="https://t.me/"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <span>✈️</span> Telegram bot
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-content">
+      <a class="brand" href="/">
+        <span class="brand-icon">🚕</span>
+        <span>Taxi Booking</span>
+      </a>
+
+      <p>© <span id="current-year">2026</span> Taxi Booking. Barcha huquqlar himoyalangan.</p>
+    </div>
+  </footer>
+
+  <script>
+    document.getElementById("current-year").textContent =
+      new Date().getFullYear();
+  </script>
+</body>
+</html>
