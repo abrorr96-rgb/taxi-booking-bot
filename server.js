@@ -15,7 +15,7 @@ const WEB_APP_URL = (
 ).replace(/\/$/, "");
 
 app.use(express.json({ limit: "100kb" }));
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static(__dirname, { index: false }));
 
 let bot = null;
 
