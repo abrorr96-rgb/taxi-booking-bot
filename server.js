@@ -19,7 +19,6 @@ app.use(express.static(__dirname, { index: false }));
 
 const orders = new Map();
 const startedDrivers = new Set();
-
 let bot = null;
 
 function cleanText(value, maxLength = 200) {
@@ -28,21 +27,8 @@ function cleanText(value, maxLength = 200) {
 
 function getDriverName(user) {
   if (user.username) return `@${user.username}`;
-
-  const name = [user.first_name, user.last_name]
-    .filter(Boolean)
-    .join(" ");
-
-  return name || `Ҳайдовчи ${user.id}`;
-}
-
-function getQueue(order) {
-  return [1, 2, 3]
-    .filter((slot) => order.slots[slot])
-    .map((slot) => ({
-      slot,
-      ...order.slots[slot]
-    }));
+  return [user.first_name, user.last_name].filter(Boolean).join(" ") ||
+    `Ҳайдовчи ${user.id}`;
 }
 
 function getGroupText(order) {
@@ -56,26 +42,19 @@ function getGroupText(order) {
     `🆔 Буюртма: ${order.orderId}\n` +
     `📍 Қаердан: ${order.pickup}\n` +
     `🏁 Қаерга: ${order.destination}\n\n` +
-    `👨‍✈️ Ҳайдовчилар навбати:\n` +
-    drivers.join("\n") +
-    `\n\n${order.statusText || "🟢 Ҳайдовчилар кутилмоқда"}`
+    `👨‍✈️ Ҳайдовчилар:\n${drivers.join("\n")}\n\n` +
+    `${order.statusText}`
   );
 }
 
 function getKeyboard(order) {
   return {
-    inline_keyboard: [
-      [1, 2, 3].map((slot) => {
-        const driver = order.slots[slot];
-
-        return {
-          text: driver
-            ? `${slot}️⃣ ${driver.name}`
-            : `${slot}️⃣ Ҳайдовчи`,
-          callback_data: `join:${order.orderId}:${slot}`
-        };
-      })
-    ]
+    inline_keyboard: [[1, 2, 3].map((slot) => ({
+      text: order.slots[slot]
+        ? `${slot}️⃣ ${order.slots[slot].name}`
+        : `${slot}️⃣ Ҳайдовчи`,
+      callback_data: `join:${order.orderId}:${slot}`
+    }))]
   };
 }
 
@@ -90,9 +69,26 @@ async function updateGroup(order) {
     });
   } catch (err) {
     if (!String(err.message).includes("message is not modified")) {
-      console.error("Гуруҳ хабарини янгилаш хатоси:", err.message);
+      console.error("Гуруҳни янгилаш хатоси:", err.message);
     }
   }
+}
+
+function getCustomerTelegram(value) {
+  const input = cleanText(value, 200);
+  if (!input) return "Кўрсатилмаган";
+
+  const username = input.replace(/^@/, "");
+
+  if (/^[a-zA-Z0-9_]{5,32}$/.test(username)) {
+    return `https://t.me/${username}`;
+  }
+
+  if (/^https:\/\/t\.me\/[a-zA-Z0-9_]+\/?$/.test(input)) {
+    return input;
+  }
+
+  return input;
 }
 
 async function sendOrderToDriver(order, driver) {
@@ -104,70 +100,64 @@ async function sendOrderToDriver(order, driver) {
     `🏁 Қаерга: ${order.destination}\n` +
     (order.name ? `👤 Исм: ${order.name}\n` : "") +
     (order.note ? `📝 Изоҳ: ${order.note}\n` : "") +
-    (order.telegramUsername
-  ? `💬 Мижоз Telegram: https://t.me/${order.telegramUsername.replace(/^@/, "")}\n`
-  : "💬 Мижоз Telegram username киритмаган.\n")
-     
-  
-    `\nСиз ${driver.slot}-навбатдаги ҳайдовчисиз.`;
+    `💬 Мижоз Telegram: ${getCustomerTelegram(order.telegramUsername)}\n\n` +
+    `Сиз ${driver.slot}-навбатдаги ҳайдовчисиз.`;
 
   await bot.sendMessage(driver.id, details, {
     reply_markup: {
-      inline_keyboard: [[
-        {
-          text: "➡️ Кейинги ҳайдовчига ўтказиш",
-          callback_data: `next:${order.orderId}`
-        }
-      ]]
+      inline_keyboard: [[{
+        text: "➡️ Кейинги ҳайдовчига ўтказиш",
+        callback_data: `next:${order.orderId}`
+      }]]
     }
   });
 }
 
 async function dispatchNext(order) {
-  if (order.finished || order.sending) return;
+  if (order.sending || order.finished) return;
+  order.sending = true;
 
-  const queue = getQueue(order);
+  try {
+    // Навбат доимо 1, кейин 2, кейин 3 бўйича.
+    while (order.currentIndex + 1 < order.queue.length) {
+      order.currentIndex += 1;
+      const driver = order.queue[order.currentIndex];
 
-  while (order.currentIndex + 1 < queue.length) {
-    order.currentIndex += 1;
-    const driver = queue[order.currentIndex];
+      if (!startedDrivers.has(driver.id)) {
+        order.statusText =
+          `⚠️ ${driver.name} ботда /start босмаган. Унинг навбати ўтказиб юборилди.`;
+        await updateGroup(order);
+        continue;
+      }
 
-    if (!startedDrivers.has(driver.id)) {
-      order.statusText =
-        `⚠️ ${driver.name} ботда /start босмаган.`;
-      await updateGroup(order);
-      continue;
+      try {
+        await sendOrderToDriver(order, driver);
+        order.currentDriverId = driver.id;
+        order.statusText = `🚕 Буюртма ${driver.name} га юборилди`;
+        await updateGroup(order);
+        return;
+      } catch (err) {
+        console.error("Ҳайдовчига хабар юборилмади:", driver.name, err.message);
+        order.statusText =
+          `⚠️ ${driver.name} га хабар бормади. Кейинги ҳайдовчи текширилмоқда.`;
+        await updateGroup(order);
+      }
     }
 
-    order.sending = true;
+    order.currentDriverId = null;
 
-    try {
-      await sendOrderToDriver(order, driver);
-
-      order.currentDriverId = driver.id;
-      order.statusText = `🚕 Буюртма ${driver.name} га юборилди`;
-      order.sending = false;
-      await updateGroup(order);
-      return;
-    } catch (err) {
-      console.error(
-        "Ҳайдовчига шахсий хабар юборилмади:",
-        driver.name,
-        err.message
-      );
-
-      order.statusText =
-        `⚠️ ${driver.name} га хабар юборилмади. Кейинги навбат текширилмоқда.`;
-
-      order.sending = false;
-      await updateGroup(order);
+    if (order.queue.length === 0) {
+      order.statusText = "🟢 Ҳайдовчилар кутилмоқда";
+      order.finished = false;
+    } else {
+      order.statusText = "🏁 Барча танланган ҳайдовчилар навбати тугади.";
+      order.finished = true;
     }
+
+    await updateGroup(order);
+  } finally {
+    order.sending = false;
   }
-
-  order.currentDriverId = null;
-  order.finished = true;
-  order.statusText = "🏁 Навбат тугади ёки ҳозирча ҳайдовчи йўқ.";
-  await updateGroup(order);
 }
 
 if (BOT_TOKEN) {
@@ -183,8 +173,7 @@ if (BOT_TOKEN) {
         msg.chat.id,
         "Ассалому алайкум! 🚕\n\n" +
         "Такси буюртма ботига хуш келибсиз.\n" +
-        "Ҳайдовчи бўлсангиз, шахсий хабарларни олиш учун " +
-        "ушбу ботда /start босиб қўйинг.",
+        "Ҳайдовчи бўлсангиз, шахсий буюртма олиш учун /start босинг.",
         {
           reply_markup: {
             inline_keyboard: [
@@ -196,18 +185,6 @@ if (BOT_TOKEN) {
       );
     } catch (err) {
       console.error("/start хатоси:", err.message);
-    }
-  });
-
-  bot.onText(/^\/help$/, async (msg) => {
-    try {
-      await bot.sendMessage(
-        msg.chat.id,
-        "Буюртма бериш учун /start ни босинг.\n" +
-        "Ҳайдовчилар шахсий буюртма олиш учун ботда /start босишлари керак."
-      );
-    } catch (err) {
-      console.error("/help хатоси:", err.message);
     }
   });
 
@@ -224,14 +201,20 @@ if (BOT_TOKEN) {
       }
 
       if (data.startsWith("join:")) {
-        const parts = data.split(":");
-        const orderId = parts[1];
-        const slot = Number(parts[2]);
+        const [, orderId, slotText] = data.split(":");
+        const slot = Number(slotText);
         const order = orders.get(orderId);
 
         if (!order) {
           await bot.answerCallbackQuery(query.id, {
-            text: "Буюртма топилмади. Сервер қайта ишга тушган бўлиши мумкин."
+            text: "Буюртма топилмади. Янги буюртмада синаб кўринг."
+          });
+          return;
+        }
+
+        if (order.finished) {
+          await bot.answerCallbackQuery(query.id, {
+            text: "Бу буюртманинг навбати тугаган."
           });
           return;
         }
@@ -239,13 +222,6 @@ if (BOT_TOKEN) {
         if (![1, 2, 3].includes(slot)) {
           await bot.answerCallbackQuery(query.id, {
             text: "Навбат рақами нотўғри."
-          });
-          return;
-        }
-
-        if (order.finished) {
-          await bot.answerCallbackQuery(query.id, {
-            text: "Бу буюртма якунланган."
           });
           return;
         }
@@ -268,8 +244,14 @@ if (BOT_TOKEN) {
 
         order.slots[slot] = {
           id: user.id,
-          name: getDriverName(user)
+          name: getDriverName(user),
+          slot
         };
+
+        // Танланган ҳайдовчилар рўйхати навбат бўйича қайта тузилади.
+        order.queue = [1, 2, 3]
+          .filter((n) => order.slots[n])
+          .map((n) => order.slots[n]);
 
         await bot.answerCallbackQuery(query.id, {
           text: `${slot}-навбат сизга бириктирилди.`
@@ -313,7 +295,7 @@ if (BOT_TOKEN) {
 
       await bot.answerCallbackQuery(query.id);
     } catch (err) {
-      console.error("Тугма ишлаш хатоси:", err.stack || err.message);
+      console.error("Тугма хатоси:", err.stack || err.message);
 
       try {
         await bot.answerCallbackQuery(query.id, {
@@ -338,7 +320,10 @@ app.post("/api/orders", async (req, res) => {
   const pickup = cleanText(req.body.pickup, 200);
   const destination = cleanText(req.body.destination, 200);
   const note = cleanText(req.body.note, 500);
-  const telegramUsername = cleanText(req.body.telegramUsername, 200);
+  const telegramUsername = cleanText(
+    req.body.telegramUsername || req.body.telegram,
+    200
+  );
 
   if (!phone || !pickup || !destination) {
     return res.status(400).json({
@@ -358,6 +343,7 @@ app.post("/api/orders", async (req, res) => {
     note,
     telegramUsername,
     slots: { 1: null, 2: null, 3: null },
+    queue: [],
     chatId: ADMIN_CHAT_ID,
     messageId: null,
     currentIndex: -1,
@@ -370,31 +356,31 @@ app.post("/api/orders", async (req, res) => {
 
   orders.set(orderId, order);
 
-  if (bot && ADMIN_CHAT_ID) {
-    try {
-      const sent = await bot.sendMessage(
-        ADMIN_CHAT_ID,
-        getGroupText(order),
-        { reply_markup: getKeyboard(order) }
-      );
-
-      order.messageId = sent.message_id;
-    } catch (err) {
-      console.error("Гуруҳга буюртма юборилмади:", err.message);
-
-      return res.status(502).json({
-        ok: false,
-        message: "Буюртма гуруҳга юборилмади. Илтимос, қайта урининг."
-      });
-    }
-  } else {
+  if (!bot || !ADMIN_CHAT_ID) {
+    orders.delete(orderId);
     return res.status(500).json({
       ok: false,
       message: "Бот ёки гуруҳ созламаси топилмади."
     });
   }
 
-  console.log("Янги буюртма қабул қилинди:", orderId);
+  try {
+    const sent = await bot.sendMessage(
+      ADMIN_CHAT_ID,
+      getGroupText(order),
+      { reply_markup: getKeyboard(order) }
+    );
+
+    order.messageId = sent.message_id;
+  } catch (err) {
+    orders.delete(orderId);
+    console.error("Гуруҳга буюртма юборилмади:", err.message);
+
+    return res.status(502).json({
+      ok: false,
+      message: "Буюртма гуруҳга юборилмади. Қайта уриниб кўринг."
+    });
+  }
 
   return res.status(201).json({
     ok: true,
