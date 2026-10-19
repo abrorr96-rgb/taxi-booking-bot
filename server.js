@@ -1,5 +1,19 @@
+Siz `store.js` o'rniga yana `server.js` ni yubordingiz. Uni ham tekshirdim, kamchiliklarni tuzatib, to'liq yangilangan kodni pastga qo'ydim. `store.js` ni hali ko'rmadim, uni oxirida so'rayman.
+Kod ichiga yozilgan "kamchili bolsa togrilab yubor..." qatori funksiya o'rtasida qolib ketgan edi. Uni olib tashladim, yangi kodda u yo'q.
+Topilgan kamchiliklar
+1. Fayllar saytdan ochilib qolardi. `express.static(__dirname)` tufayli `/server.js` va `/package.json` ochilardi. Endi faqat `index.html`, `app.js` va `style.css` beriladi.
+2. Buyurtma spamidan himoya yo'q edi. Kimdir `/api/orders` ga yuzlab so'rov yuborib guruhni to'ldirishi mumkin edi. Endi bir IP'dan 10 daqiqada 5 tagacha buyurtma qabul qilinadi.
+3. Telefon tekshirilmasdi. "x" yozib ham buyurtma berish va blokdan qochish mumkin edi. Endi telefonda kamida 9 ta raqam bo'lishi shart.
+4. `/start` bosgan haydovchilar ro'yxati xotirada edi. Server qayta ishga tushsa (Render'da tez-tez bo'ladi), hamma haydovchi "start bosmagan" deb o'tkazib yuborilardi. Endi bu oldindan tekshirilmaydi, to'g'ridan-to'g'ri xabar yuboriladi. Haydovchi `/start` bosmagan bo'lsa, Telegram xato qaytaradi va navbat baribir keyingisiga o'tadi.
+5. Buyurtma ID'si takrorlanishi mumkin edi. Eski usul ~28 soatda aylanib qolardi. Endi ID tasodifiy (`TX-A1B2C3D4`).
+6. Xavfsiz o'chirish yo'q edi. Render qayta deploy qilganda bot ikki nusxada ishlab, `409` xatosi chiqishi mumkin edi. Endi `SIGTERM` da polling to'xtaydi va buyurtmalar saqlanadi.
+7. Xatolar serverni qulatishi mumkin edi. `unhandledRejection` va noto'g'ri JSON uchun ishlov berish qo'shildi.
+8. Render orqasida IP noto'g'ri aniqlanardi. `trust proxy` qo'shildi.
+Yangilangan `server.js`
+
 require("dotenv").config();
 
+const crypto = require("crypto");
 const express = require("express");
 const path = require("path");
 const TelegramBot = require("node-telegram-bot-api");
@@ -7,6 +21,8 @@ const store = require("./store");
 const { setupAdmin, isBlocked } = require("./admin");
 
 const app = express();
+app.set("trust proxy", 1);
+
 const PORT = Number(process.env.PORT || 3000);
 const BOT_TOKEN = process.env.BOT_TOKEN || "";
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || "";
@@ -16,22 +32,64 @@ const WEB_APP_URL = (
 ).replace(/\/$/, "");
 
 app.use(express.json({ limit: "100kb" }));
-// Сервер файллари ва маълумот сайт орқали очилмаслиги учун.
-app.use(
-  ["/admin.html", "/admin.js", "/store.js", "/taxi-data.json"],
-  (_req, res) => res.sendStatus(404)
+
+// Фақат сайт учун керакли файллар очилади.
+// Агар index.html да бошқа файллар (расм, иконка) бўлса, шу ерга қўшинг.
+app.get("/app.js", (_req, res) =>
+  res.sendFile(path.join(__dirname, "app.js"))
 );
-app.use(express.static(__dirname, { index: false }));
+app.get("/style.css", (_req, res) =>
+  res.sendFile(path.join(__dirname, "style.css"))
+);
 
 const orders = new Map();
 store.loadOrders(orders);
 store.startAutosave(orders);
-const startedDrivers = new Set();
 let bot = null;
+
+/* ---------- Ёрдамчи функциялар ---------- */
 
 function cleanText(value, maxLength = 200) {
   return String(value || "").trim().slice(0, maxLength);
 }
+
+function newOrderId() {
+  let id;
+  do {
+    id = `TX-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+  } while (orders.has(id));
+  return id;
+}
+
+// Битта IP дан 10 дақиқада кўпи билан 5 та буюртма.
+const orderHits = new Map();
+const ORDER_WINDOW_MS = 10 * 60 * 1000;
+const ORDER_MAX_PER_IP = 5;
+
+function orderRateLimited(ip) {
+  const now = Date.now();
+  const hits = (orderHits.get(ip) || []).filter(
+    (t) => now - t < ORDER_WINDOW_MS
+  );
+
+  if (hits.length >= ORDER_MAX_PER_IP) {
+    orderHits.set(ip, hits);
+    return true;
+  }
+
+  hits.push(now);
+  orderHits.set(ip, hits);
+  return false;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, hits] of orderHits) {
+    if (!hits.some((t) => now - t < ORDER_WINDOW_MS)) {
+      orderHits.delete(ip);
+    }
+  }
+}, ORDER_WINDOW_MS).unref();
 
 function getDriverName(user) {
   if (user.username) return `@${user.username}`;
@@ -136,11 +194,7 @@ async function sendOrderToDriver(order, driver) {
 // Фақат ҳали ишлов берилмаган ҳайдовчига буюртма юборади.
 // Кейинги ҳайдовчи ҳали навбат олмаган бўлса, буюртма очиқ қолади.
 async function dispatchNext(order) {
-  if (
-    order.sending ||
-    order.finished ||
-    order.currentDriverId
-  ) {
+  if (order.sending || order.finished || order.currentDriverId) {
     return;
   }
 
@@ -149,18 +203,16 @@ async function dispatchNext(order) {
   try {
     while (true) {
       const slot = [1, 2, 3].find(
-        (n) =>
-          order.slots[n] &&
-          !order.processedSlots.has(n)
+        (n) => order.slots[n] && !order.processedSlots.has(n)
       );
 
       if (!slot) {
-        const allSlotsFilled = [1, 2, 3].every(
-          (n) => Boolean(order.slots[n])
+        const allSlotsFilled = [1, 2, 3].every((n) =>
+          Boolean(order.slots[n])
         );
 
-        const allProcessed = [1, 2, 3].every(
-          (n) => order.processedSlots.has(n)
+        const allProcessed = [1, 2, 3].every((n) =>
+          order.processedSlots.has(n)
         );
 
         if (allSlotsFilled && allProcessed) {
@@ -176,15 +228,6 @@ async function dispatchNext(order) {
       }
 
       const driver = order.slots[slot];
-
-      if (!startedDrivers.has(driver.id)) {
-        order.processedSlots.add(slot);
-        order.statusText =
-          `⚠️ ${driver.name} ботда /start босмаган. Навбати ўтказилди.`;
-
-        await updateGroup(order);
-        continue;
-      }
 
       try {
         await sendOrderToDriver(order, driver);
@@ -204,7 +247,8 @@ async function dispatchNext(order) {
 
         order.processedSlots.add(slot);
         order.statusText =
-          `⚠️ ${driver.name} га хабар бормади. Кейинги ҳайдовчи текширилмоқда.`;
+          `⚠️ ${driver.name} га хабар бормади (ботда /start босмаган бўлиши мумкин). ` +
+          `Кейинги ҳайдовчи текширилмоқда.`;
 
         await updateGroup(order);
       }
@@ -236,19 +280,17 @@ async function cancelOrder(order) {
   await updateGroup(order);
 }
 
+/* ---------- Telegram бот ---------- */
+
 if (BOT_TOKEN) {
   bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
   bot.onText(/^\/start(?:\s.*)?$/, async (msg) => {
-    if (msg.from && msg.chat.type === "private") {
-      startedDrivers.add(msg.from.id);
-    }
-
     try {
       await bot.sendMessage(
         msg.chat.id,
         "Такси буюртма ботига хуш келибсиз!\n\n" +
-"🚕 Мижозлар, бот орқали таксига буюртма беринг!",
+          "🚕 Мижозлар, бот орқали таксига буюртма беринг!",
         {
           reply_markup: {
             inline_keyboard: [
@@ -386,10 +428,7 @@ if (BOT_TOKEN) {
 
       await bot.answerCallbackQuery(query.id);
     } catch (err) {
-      console.error(
-        "Тугма хатоси:",
-        err.stack || err.message
-      );
+      console.error("Тугма хатоси:", err.stack || err.message);
 
       try {
         await bot.answerCallbackQuery(query.id, {
@@ -407,6 +446,8 @@ if (BOT_TOKEN) {
 } else {
   console.warn("BOT_TOKEN йўқ. Telegram бот ўчирилган.");
 }
+
+/* ---------- Сайт API ---------- */
 
 app.post("/api/orders", async (req, res) => {
   const body = req.body || {};
@@ -429,6 +470,15 @@ app.post("/api/orders", async (req, res) => {
     });
   }
 
+  const digits = phone.replace(/\D/g, "");
+
+  if (digits.length < 9 || digits.length > 15) {
+    return res.status(400).json({
+      ok: false,
+      message: "Телефон рақами нотўғри."
+    });
+  }
+
   if (isBlocked(phone, telegramUsername)) {
     return res.status(403).json({
       ok: false,
@@ -443,7 +493,14 @@ app.post("/api/orders", async (req, res) => {
     });
   }
 
-  const orderId = `TX-${Date.now().toString().slice(-8)}`;
+  if (orderRateLimited(req.ip || "")) {
+    return res.status(429).json({
+      ok: false,
+      message: "Жуда кўп буюртма. Бироз кутиб, қайта уриниб кўринг."
+    });
+  }
+
+  const orderId = newOrderId();
 
   const order = {
     orderId,
@@ -511,6 +568,69 @@ app.get("/", (_req, res) => {
 
 setupAdmin(app, { orders, cancelOrder });
 
+// Хато ушлагич (масалан, noto'g'ri JSON).
+app.use((err, _req, res, next) => {
+  if (res.headersSent) return next(err);
+
+  if (err && err.type === "entity.parse.failed") {
+    return res.status(400).json({
+      ok: false,
+      message: "JSON нотўғри."
+    });
+  }
+
+  console.error("Сервер хатоси:", err && err.message);
+
+  return res.status(500).json({
+    ok: false,
+    message: "Сервер хатоси."
+  });
+});
+
+/* ---------- Ишга тушириш ва тўхтатиш ---------- */
+
+process.on("unhandledRejection", (err) => {
+  console.error("Unhandled rejection:", err);
+});
+
+function shutdown(signal) {
+  console.log(`${signal} олинди, сервер тўхтатилмоқда...`);
+
+  try {
+    store.saveOrders();
+  } catch (err) {
+    console.error("Сақлаш хатоси:", err.message);
+  }
+
+  const done = () => process.exit(0);
+  setTimeout(done, 5000).unref();
+
+  if (bot) {
+    Promise.resolve(bot.stopPolling()).catch(() => {}).then(done);
+  } else {
+    done();
+  }
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Такси сайти ишга тушди: порт ${PORT}`);
 });
+
+`admin.js` da bitta kichik tuzatish
+Hozir `clientIp` funksiyasi `x-forwarded-for` ning birinchi qiymatini oladi. Uni soxtalashtirish mumkin, shunda parol topishga qarshi himoya (10 ta urinish limiti) aylanib o'tiladi. `admin.js` dagi funksiyani shunday almashtiring (`trust proxy` endi `server.js` da yoqilgan):
+
+function clientIp(req) {
+  return req.ip || req.socket.remoteAddress || "";
+}
+
+Yangilagandan keyin tekshiring
+1. GitHub'ga yuklab, Render'da deploy qiling.
+2. `https://taxi-booking-bot-pb3t.onrender.com/server.js` ni oching. Endi 404 chiqishi kerak.
+3. Saytni oching va `index.html` to'g'ri ko'rinayotganini, buyurtma ketayotganini tekshiring. Sahifa "buzuq" (stilsiz) chiqsa, `index.html` boshqa fayllarni ham ishlatayotgan bo'lishi mumkin, ayting.
+4. `/admin` ga kirib, test buyurtmani bloklash va bekor qilishni sinab ko'ring.
+Hali ko'rmagan narsam: `store.js`
+Bu juda muhim. `processedSlots` bu `Set`, JSON'ga yozilganda oddiy `Set` bo'sh obyekt `{}` bo'lib qoladi. `store.js` uni massivga aylantirib saqlamasa va o'qiganda qayta `Set` qilmasa, server qayta ishga tushgandan keyin eski buyurtmalarda `processedSlots.has is not a function` xatosi chiqadi. Bundan tashqari, saqlash fayli Render'da o'chib ketmasligi ham tekshirilishi kerak.
+`store.js` kodini yuboring (token va parollarsiz), uni ham shu tarzda tekshirib beraman.
