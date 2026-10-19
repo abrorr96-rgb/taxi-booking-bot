@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="uz-Cyrl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Такси админ панели</title>
+<style>
+:root{
+  --bg:#EDF1EF; --surface:#FFFFFF; --surface-2:#F5F8F6; --ink:#14201C; --muted:#5A6A64; --line:#D8DFDB;
+  --accent:#0E6B5A; --accent-ink:#FFFFFF;
+  --new:#1D5FD1; --new-bg:#E2EBFA;
+  --prep:#8F5400; --prep-bg:#FAEACB;
+  --cancel:#56635E; --cancel-bg:#E5E9E7;
+  --bad:#B3261E; --bad-bg:#FBE2DF; --bad-ink:#FFFFFF;
+  --font:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --radius:6px;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0E1412; --surface:#161F1C; --surface-2:#1B2723; --ink:#E7EFEB; --muted:#93A59E; --line:#28352F;
+    --accent:#55C5AA; --accent-ink:#06241D;
+    --new:#86B3FF; --new-bg:#172A4D;
+    --prep:#F2B54B; --prep-bg:#3A2B0E;
+    --cancel:#9AA8A3; --cancel-bg:#232C29;
+    --bad:#FF8A80; --bad-bg:#3F1B18; --bad-ink:#3A0D0A;
+    color-scheme:dark;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 var(--font);-webkit-text-size-adjust:100%}
+h1{margin:0;font-size:17px;font-weight:700}
+button{font-family:inherit}
+a{color:var(--accent)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.sub{font-size:12.5px;color:var(--muted)}
+.wrap{max-width:1180px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-left))}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.top{position:sticky;top:0;z-index:5;background:var(--surface);border-bottom:1px solid var(--line)}
+.top-in{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding-top:8px;padding-bottom:8px}
+.tabs{display:flex;gap:4px;margin-left:auto}
+.tab{background:none;border:0;color:var(--muted);font:600 14px var(--font);padding:10px 12px;cursor:pointer;display:flex;gap:8px;align-items:baseline;box-shadow:inset 0 -2px 0 transparent}
+.tab:hover{color:var(--ink)}
+.tab[aria-current="page"]{color:var(--ink);box-shadow:inset 0 -2px 0 var(--accent)}
+.tab .mono{font-size:12px;color:var(--muted)}
+@media (max-width:560px){.tabs{margin-left:0;width:100%}.tab{flex:1;justify-content:center}}
+
+main{padding-top:16px;padding-bottom:80px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:16px}
+.stat{padding:12px 16px;border-right:1px solid var(--line);min-width:0}
+.stat:last-child{border-right:0}
+.stat .n{font:500 26px/1.15 var(--mono)}
+.stat .n.bad{color:var(--bad)}
+.stat .l{font-size:12.5px;color:var(--muted)}
+@media (max-width:640px){
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .stat:nth-child(2){border-right:0}
+  .stat:nth-child(-n+2){border-bottom:1px solid var(--line)}
+}
+
+.note{background:var(--bad-bg);color:var(--bad);border-radius:var(--radius);padding:10px 14px;margin-bottom:12px;font-size:14px}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.search{flex:1 1 240px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.chip{border:1px solid var(--line);background:var(--surface);color:var(--muted);padding:5px 11px;border-radius:999px;font:500 13px var(--font);cursor:pointer;display:inline-flex;gap:6px;align-items:baseline}
+.chip .mono{font-size:12px}
+.chip:hover{color:var(--ink)}
+.chip[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--bg)}
+
+.field{font:16px var(--font);padding:8px 10px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);color:var(--ink);width:100%;min-width:0;min-height:38px}
+.field::placeholder{color:var(--muted)}
+.btn{font:600 13px var(--font);padding:7px 12px;border-radius:var(--radius);border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;min-height:36px}
+.btn:hover{background:var(--surface-2)}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.danger{background:var(--bad);border-color:var(--bad);color:var(--bad-ink)}
+.btn.warn{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,var(--line))}
+.tag{display:inline-block;font:600 11px var(--font);padding:2px 6px;border-radius:4px;vertical-align:1px}
+.tag.bad{background:var(--bad-bg);color:var(--bad)}
+.pill{display:inline-block;font:600 12.5px var(--font);padding:4px 9px;border-radius:var(--radius)}
+.st-waiting{background:var(--new-bg);color:var(--new)}
+.st-driver{background:var(--prep-bg);color:var(--prep)}
+.st-finished{background:var(--cancel-bg);color:var(--cancel)}
+.st-cancelled{background:var(--bad-bg);color:var(--bad)}
+
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px;margin-bottom:12px}
+.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+label{display:grid;gap:4px;font-size:12.5px;color:var(--muted);font-weight:500;min-width:0}
+.form-actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+
+.list{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.row{display:grid;gap:6px 16px;padding:12px 16px;border-top:1px solid var(--line);align-items:start}
+.row>*{min-width:0;overflow-wrap:anywhere}
+.row:first-child{border-top:0}
+.thead{background:var(--surface-2);font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);padding-top:8px;padding-bottom:8px;align-items:center}
+.order{grid-template-columns:130px minmax(0,1.1fr) minmax(0,1.6fr) minmax(0,1.1fr) 170px}
+.client{grid-template-columns:minmax(0,1.6fr) 110px 110px 130px minmax(200px,1.2fr)}
+.row.is-blocked{background:color-mix(in srgb,var(--bad-bg) 40%,var(--surface))}
+.drivers{margin-top:6px;font-size:12.5px;color:var(--muted)}
+.confirm{display:grid;gap:8px}
+.confirm .btns{display:flex;gap:8px;flex-wrap:wrap}
+.reason{margin-top:2px;font-size:13px;color:var(--bad)}
+.empty{padding:36px 16px;text-align:center;color:var(--muted)}
+.empty b{display:block;color:var(--ink);font-size:16px;margin-bottom:4px}
+
+@media (max-width:940px){
+  .thead{display:none}
+  .order{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"client status" "route route" "id id" "act act"}
+  .order .o-id{grid-area:id}
+  .order .o-client{grid-area:client}
+  .order .o-route{grid-area:route}
+  .order .o-status{grid-area:status;text-align:right}
+  .order .o-act{grid-area:act}
+  .client{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-areas:"who who" "orders last" "action action"}
+  .client .c-who{grid-area:who}
+  .client .c-orders{grid-area:orders}
+  .client .c-first{display:none}
+  .client .c-last{grid-area:last;text-align:right}
+  .client .c-action{grid-area:action}
+}
+
+.toast-host{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:center;pointer-events:none;z-index:20;padding:0 16px calc(16px + env(safe-area-inset-bottom))}
+.toast{background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:var(--radius);font-size:14px;font-weight:500;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-in">
+    <h1>Такси админ панели</h1>
+    <nav class="tabs" aria-label="Бўлимлар">
+      <button class="tab" id="tab-orders" data-act="tab" data-tab="orders" aria-current="page">Буюртмалар <span class="mono" id="cnt-orders">0</span></button>
+      <button class="tab" id="tab-clients" data-act="tab" data-tab="clients">Мижозлар <span class="mono" id="cnt-clients">0</span></button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="stats" id="stats"></div>
+  <div id="notice"></div>
+
+  <section id="sec-orders">
+    <div class="toolbar">
+      <input class="field search" id="oq" type="search" placeholder="Қидириш: ID, исм, телефон, манзил" autocomplete="off" aria-label="Буюртмаларни қидириш">
+    </div>
+    <div class="chips" id="ochips"></div>
+    <div class="list" id="olist"></div>
+  </section>
+
+  <section id="sec-clients" hidden>
+    <div class="toolbar">
+      <input class="field search" id="cq" type="search" placeholder="Қидириш: исм, телефон, Telegram" autocomplete="off" aria-label="Мижозларни қидириш">
+      <button class="btn primary" data-act="open-form">+ Рақамни блоклаш</button>
+    </div>
+    <form class="panel" id="block-form" hidden>
+      <div class="fields">
+        <label>Телефон<input class="field" id="bf-phone" required maxlength="40" inputmode="tel" placeholder="+998 90 123 45 67" autocomplete="off"></label>
+        <label>Исм (ихтиёрий)<input class="field" id="bf-name" maxlength="80" autocomplete="off"></label>
+        <label>Сабаб (ихтиёрий)<input class="field" id="bf-reason" maxlength="120" autocomplete="off"></label>
+      </div>
+      <div class="form-actions">
+        <button class="btn danger" type="submit">Блоклаш</button>
+        <button class="btn" type="button" data-act="close-form">Ёпиш</button>
+      </div>
+    </form>
+    <div class="chips" id="cchips"></div>
+    <div class="list" id="clist"></div>
+  </section>
+</main>
+
+<div class="toast-host"><div class="toast" id="toast" role="status" aria-live="polite" hidden></div></div>
+
+<script>
+(function(){
+"use strict";
+function $(s){ return document.querySelector(s); }
+
+var ST = {
+  waiting: "Ҳайдовчи кутилмоқда",
+  driver: "Ҳайдовчида",
+  finished: "Навбат тугади",
+  cancelled: "Бекор қилинган"
+};
+var S = {
+  tab: "orders", ostatus: "all", cstat: "all", oq: "", cq: "",
+  data: null, raw: "", offline: false,
+  blocking: null, reason: "", cancelling: null, formOpen: false, busy: false
+};
+
+function esc(v){
+  return String(v == null ? "" : v).replace(/[&<>"']/g, function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+  });
+}
+function two(n){ return (n < 10 ? "0" : "") + n; }
+function fdt(iso){
+  if(!iso) return "";
+  var d = new Date(iso);
+  if(isNaN(d)) return "";
+  return two(d.getDate()) + "." + two(d.getMonth() + 1) + " " + two(d.getHours()) + ":" + two(d.getMinutes());
+}
+function fday(iso){
+  if(!iso) return "—";
+  var d = new Date(iso);
+  if(isNaN(d)) return "—";
+  return two(d.getDate()) + "." + two(d.getMonth() + 1) + "." + d.getFullYear();
+}
+
+var toastTimer = null;
+function toast(msg){
+  var t = $("#toast");
+  t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ t.hidden = true; }, 2600);
+}
+
+function api(path, body){
+  return fetch(path, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body || {})
+  }).then(function(r){
+    return r.json().catch(function(){ return {}; }).then(function(j){
+      if(!r.ok || j.ok === false) throw new Error(j.message || "Сақланмади. Қайта уриниб кўринг.");
+      return j;
+    });
+  });
+}
+function act(fn, okMsg){
+  if(S.busy) return;
+  S.busy = true;
+  fn().then(function(){
+    if(okMsg) toast(okMsg);
+    return load(true);
+  }).catch(function(e){
+    toast(e.message || "Сақланмади. Қайта уриниб кўринг.");
+  }).then(function(){ S.busy = false; });
+}
+
+/* ---------- ma'lumot ---------- */
+function load(force){
+  return fetch("/admin/api/state", {cache: "no-store"}).then(function(r){
+    if(!r.ok) throw new Error("HTTP " + r.status);
+    return r.text();
+  }).then(function(t){
+    var wasOffline = S.offline;
+    S.offline = false;
+    if(force || t !== S.raw || wasOffline){
+      S.raw = t;
+      S.data = JSON.parse(t);
+      render();
+    }
+  }).catch(function(){
+    if(!S.offline){ S.offline = true; render(); }
+  });
+}
+
+/* ---------- render ---------- */
+function chip(a, v, label, n, on){
+  return '<button class="chip" data-act="' + a + '" data-v="' + v + '" aria-pressed="' + (on ? "true" : "false") + '">' +
+    esc(label) + ' <span class="mono">' + n + '</span></button>';
+}
+function emptyBlock(t, h){ return '<div class="empty"><b>' + esc(t) + '</b>' + esc(h) + '</div>'; }
+function tgLink(u){
+  return u ? '<a href="https://t.me/' + esc(u) + '" target="_blank" rel="noopener">@' + esc(u) + '</a>' : "";
+}
+
+function renderStats(){
+  var d = S.data || {orders: [], clients: [], blockedCount: 0};
+  var w = 0, dr = 0;
+  d.orders.forEach(function(o){ if(o.status === "waiting") w++; else if(o.status === "driver") dr++; });
+  function st(n, l, cls){ return '<div class="stat"><div class="n' + (cls ? " " + cls : "") + '">' + n + '</div><div class="l">' + l + '</div></div>'; }
+  $("#stats").innerHTML = st(w, "Кутилмоқда") + st(dr, "Ҳайдовчида") + st(d.orders.length, "Жами буюртма") + st(d.blockedCount, "Блокланган", d.blockedCount ? "bad" : "");
+  $("#cnt-orders").textContent = d.orders.length;
+  $("#cnt-clients").textContent = d.clients.length;
+}
+
+function orderRow(o){
+  var canCancel = o.status === "waiting" || o.status === "driver";
+  var act;
+  if(S.cancelling === o.id){
+    act = '<div class="confirm"><div class="sub">Буюртма бекор қилинсинми?</div><div class="btns">' +
+      '<button class="btn danger" data-act="cancel-yes" data-id="' + esc(o.id) + '">Ҳа, бекор қилиш</button>' +
+      '<button class="btn" data-act="cancel-no">Ортга</button></div></div>';
+  } else if(canCancel){
+    act = '<button class="btn warn" data-act="cancel-ask" data-id="' + esc(o.id) + '">Бекор қилиш</button>';
+  } else { act = ""; }
+
+  var drivers = o.drivers.map(function(n, i){ return (i + 1) + ". " + (n ? esc(n) : "—"); }).join(" · ");
+  var status = '<span class="pill st-' + o.status + '">' + ST[o.status] + '</span>' +
+    (o.currentDriver ? '<div class="sub">' + esc(o.currentDriver) + '</div>' : "");
+
+  return '<article class="row order">' +
+    '<div class="o-id"><b class="mono">' + esc(o.id) + '</b><div class="sub">' + fdt(o.createdAt) + '</div></div>' +
+    '<div class="o-client"><b>' + esc(o.name || "Исм кўрсатилмаган") + '</b>' +
+      (o.blocked ? ' <span class="tag bad">Блокланган</span>' : '') +
+      '<div class="sub mono">' + esc(o.phone) + '</div>' +
+      (o.telegram ? '<div class="sub">' + tgLink(o.telegram) + '</div>' : '') + '</div>' +
+    '<div class="o-route">' + esc(o.pickup) + ' → ' + esc(o.destination) +
+      (o.note ? '<div class="sub">' + esc(o.note) + '</div>' : '') +
+      '<div class="drivers">Навбат: ' + drivers + '</div></div>' +
+    '<div class="o-status">' + status + '</div>' +
+    '<div class="o-act">' + act + '</div>' +
+  '</article>';
+}
+
+function renderOrders(){
+  var d = S.data;
+  var box = $("#olist");
+  if(!d){ box.innerHTML = '<div class="empty">Юкланмоқда…</div>'; $("#ochips").innerHTML = ""; return; }
+  var counts = {all: d.orders.length, waiting: 0, driver: 0, finished: 0, cancelled: 0};
+  d.orders.forEach(function(o){ counts[o.status]++; });
+  $("#ochips").innerHTML =
+    chip("ostatus", "all", "Ҳаммаси", counts.all, S.ostatus === "all") +
+    chip("ostatus", "waiting", "Кутилмоқда", counts.waiting, S.ostatus === "waiting") +
+    chip("ostatus", "driver", "Ҳайдовчида", counts.driver, S.ostatus === "driver") +
+    chip("ostatus", "finished", "Тугаган", counts.finished, S.ostatus === "finished") +
+    chip("ostatus", "cancelled", "Бекор қилинган", counts.cancelled, S.ostatus === "cancelled");
+
+  if(!d.orders.length){
+    box.innerHTML = emptyBlock("Ҳали буюртма йўқ", "Буюртмалар сайтдан келганда шу ерда кўринади.");
+    return;
+  }
+  var q = S.oq.trim().toLowerCase();
+  var list = d.orders.filter(function(o){
+    if(S.ostatus !== "all" && o.status !== S.ostatus) return false;
+    if(q && [o.id, o.name, o.phone, o.telegram, o.pickup, o.destination, o.note].join(" ").toLowerCase().indexOf(q) < 0) return false;
+    return true;
+  }).sort(function(a, b){ return String(b.createdAt).localeCompare(String(a.createdAt)); });
+  if(!list.length){ box.innerHTML = emptyBlock("Ҳеч нарса топилмади", "Қидирув ёки фильтрни ўзгартириб кўринг."); return; }
+  box.innerHTML = '<div class="row order thead" aria-hidden="true"><div>Буюртма</div><div>Мижоз</div><div>Йўналиш</div><div>Ҳолат</div><div>Амал</div></div>' + list.map(orderRow).join("");
+}
+
+function clientRow(c){
+  var act;
+  if(S.blocking === c.key){
+    act = '<div class="confirm"><input class="field" id="reason-input" maxlength="120" placeholder="Сабаб (ихтиёрий)" value="' + esc(S.reason) + '" aria-label="Блоклаш сабаби">' +
+      '<div class="btns"><button class="btn danger" data-act="block-yes" data-key="' + esc(c.key) + '">Блоклаш</button>' +
+      '<button class="btn" data-act="block-no">Ортга</button></div>' +
+      '<div class="sub">Блокланган мижознинг янги буюртмалари қабул қилинмайди.</div></div>';
+  } else if(c.blocked){
+    act = '<button class="btn" data-act="unblock" data-key="' + esc(c.blockKey) + '">Блокдан чиқариш</button>';
+  } else {
+    act = '<button class="btn warn" data-act="block-ask" data-key="' + esc(c.key) + '">Блоклаш</button>';
+  }
+  return '<article class="row client' + (c.blocked ? " is-blocked" : "") + '">' +
+    '<div class="c-who"><b>' + esc(c.name || "Исм кўрсатилмаган") + '</b>' +
+      (c.blocked ? ' <span class="tag bad">Блокланган</span>' : '') +
+      '<div class="sub mono">' + esc(c.phone) + '</div>' +
+      (c.telegram ? '<div class="sub">' + tgLink(c.telegram) + '</div>' : '') +
+      (c.blocked && c.reason ? '<div class="reason">Сабаб: ' + esc(c.reason) + '</div>' : '') + '</div>' +
+    '<div class="c-orders">' + c.orders + ' та буюртма</div>' +
+    '<div class="c-first sub">' + fday(c.firstAt) + '</div>' +
+    '<div class="c-last sub">Охирги: ' + fday(c.lastAt) + '</div>' +
+    '<div class="c-action">' + act + '</div>' +
+  '</article>';
+}
+
+function renderClients(){
+  var d = S.data;
+  var box = $("#clist");
+  if(!d){ box.innerHTML = '<div class="empty">Юкланмоқда…</div>'; $("#cchips").innerHTML = ""; return; }
+  var nb = 0;
+  d.clients.forEach(function(c){ if(c.blocked) nb++; });
+  $("#cchips").innerHTML =
+    chip("cstat", "all", "Ҳаммаси", d.clients.length, S.cstat === "all") +
+    chip("cstat", "active", "Фаол", d.clients.length - nb, S.cstat === "active") +
+    chip("cstat", "blocked", "Блокланган", nb, S.cstat === "blocked");
+  if(!d.clients.length){
+    box.innerHTML = emptyBlock("Ҳали мижоз йўқ", "Мижозлар биринчи буюртмадан кейин шу ерда кўринади.");
+    return;
+  }
+  var q = S.cq.trim().toLowerCase();
+  var list = d.clients.filter(function(c){
+    if(S.cstat === "active" && c.blocked) return false;
+    if(S.cstat === "blocked" && !c.blocked) return false;
+    if(q && [c.name, c.phone, c.telegram].join(" ").toLowerCase().indexOf(q) < 0) return false;
+    return true;
+  }).sort(function(a, b){
+    return (b.blocked ? 1 : 0) - (a.blocked ? 1 : 0) || String(b.lastAt).localeCompare(String(a.lastAt));
+  });
+  if(!list.length){ box.innerHTML = emptyBlock("Ҳеч нарса топилмади", "Қидирув ёки фильтрни ўзгартириб кўринг."); return; }
+  box.innerHTML = '<div class="row client thead" aria-hidden="true"><div>Мижоз</div><div>Буюртмалар</div><div>Биринчи</div><div>Охирги</div><div>Амал</div></div>' + list.map(clientRow).join("");
+}
+
+function render(){
+  var oTab = S.tab === "orders";
+  $("#sec-orders").hidden = !oTab;
+  $("#sec-clients").hidden = oTab;
+  if(oTab){ $("#tab-orders").setAttribute("aria-current", "page"); $("#tab-clients").removeAttribute("aria-current"); }
+  else { $("#tab-clients").setAttribute("aria-current", "page"); $("#tab-orders").removeAttribute("aria-current"); }
+  $("#block-form").hidden = !S.formOpen;
+  $("#notice").innerHTML = S.offline ? '<div class="note">Сервер билан алоқа узилди. Қайта уриниб кўрилмоқда…</div>' : "";
+  renderStats();
+  renderOrders();
+  renderClients();
+  if(S.blocking){
+    var ri = $("#reason-input");
+    if(ri && document.activeElement !== ri){
+      ri.focus();
+      try{ ri.setSelectionRange(ri.value.length, ri.value.length); }catch(e){}
+    }
+  }
+}
+
+/* ---------- harakatlar ---------- */
+function findClient(key){
+  var list = (S.data && S.data.clients) || [];
+  for(var i = 0; i < list.length; i++) if(list[i].key === key) return list[i];
+  return null;
+}
+function blockClient(key){
+  var c = findClient(key);
+  if(!c) return;
+  var reason = S.reason.trim();
+  act(function(){
+    return api("/admin/api/block", {phone: c.phone, name: c.name, telegram: c.telegram, reason: reason});
+  }, "Мижоз блокланди");
+  S.blocking = null; S.reason = "";
+}
+
+document.addEventListener("click", function(e){
+  var t = e.target.closest ? e.target.closest("[data-act]") : null;
+  if(!t) return;
+  var a = t.getAttribute("data-act"), id = t.getAttribute("data-id"), key = t.getAttribute("data-key");
+  if(a === "tab"){ S.tab = t.getAttribute("data-tab"); render(); }
+  else if(a === "ostatus"){ S.ostatus = t.getAttribute("data-v"); render(); }
+  else if(a === "cstat"){ S.cstat = t.getAttribute("data-v"); render(); }
+  else if(a === "open-form"){ S.formOpen = true; render(); $("#bf-phone").focus(); }
+  else if(a === "close-form"){ S.formOpen = false; render(); }
+  else if(a === "cancel-ask"){ S.cancelling = id; render(); }
+  else if(a === "cancel-no"){ S.cancelling = null; render(); }
+  else if(a === "cancel-yes"){
+    S.cancelling = null;
+    act(function(){ return api("/admin/api/orders/" + encodeURIComponent(id) + "/cancel"); }, "Буюртма бекор қилинди");
+    render();
+  }
+  else if(a === "block-ask"){ S.blocking = key; S.reason = ""; render(); }
+  else if(a === "block-no"){ S.blocking = null; S.reason = ""; render(); }
+  else if(a === "block-yes"){ blockClient(key); render(); }
+  else if(a === "unblock"){ act(function(){ return api("/admin/api/unblock", {key: key}); }, "Блокдан чиқарилди"); }
+});
+
+document.addEventListener("input", function(e){
+  var t = e.target;
+  if(t.id === "oq"){ S.oq = t.value; renderOrders(); }
+  else if(t.id === "cq"){ S.cq = t.value; renderClients(); }
+  else if(t.id === "reason-input"){ S.reason = t.value; }
+});
+document.addEventListener("keydown", function(e){
+  if(e.target && e.target.id === "reason-input"){
+    if(e.key === "Enter"){ e.preventDefault(); blockClient(S.blocking); render(); }
+    else if(e.key === "Escape"){ S.blocking = null; S.reason = ""; render(); }
+  }
+});
+
+$("#block-form").addEventListener("submit", function(e){
+  e.preventDefault();
+  var form = e.target;
+  var body = {phone: $("#bf-phone").value, name: $("#bf-name").value, reason: $("#bf-reason").value};
+  act(function(){ return api("/admin/api/block", body); }, "Мижоз блокланди");
+  form.reset(); S.formOpen = false; render();
+});
+
+load(true);
+setInterval(function(){ if(!document.hidden) load(false); }, 8000);
+document.addEventListener("visibilitychange", function(){ if(!document.hidden) load(false); });
+})();
+</script>
+</body>
+</html>
