@@ -5,7 +5,6 @@ const path = require("path");
 const express = require("express");
 const store = require("./store");
 
-// Render'га қўлда ёзилганда пайдо бўладиган бўш жойлар олиб ташланади.
 const RAW_PASSWORD = String(process.env.ADMIN_PASSWORD || "");
 const ADMIN_USER = String(process.env.ADMIN_USER || "admin").trim();
 const ADMIN_PASSWORD = RAW_PASSWORD.trim();
@@ -15,8 +14,6 @@ function clean(value, max) {
   return String(value || "").trim().slice(0, max);
 }
 
-// Рақамнинг охирги 9 раками: +998 90 123 45 67, 90 123 45 67 ва
-// 998901234567 битта мижоз деб ҳисобланади.
 function phoneKey(phone) {
   const digits = String(phone || "").replace(/\D/g, "");
   return digits.length > 9 ? digits.slice(-9) : digits;
@@ -38,11 +35,9 @@ function findBlock(phone, telegram) {
   const tk = tgKey(telegram);
 
   return (
-    store
-      .getBlocked()
-      .find(
-        (b) => (pk && b.key === pk) || (tk && b.tg && b.tg === tk)
-      ) || null
+    store.getBlocked().find(
+      (b) => (pk && b.key === pk) || (tk && b.tg && b.tg === tk)
+    ) || null
   );
 }
 
@@ -50,7 +45,7 @@ function isBlocked(phone, telegram) {
   return Boolean(findBlock(phone, telegram));
 }
 
-/* ---------- кириш (Basic auth) ---------- */
+/* ---------- Admin login ---------- */
 
 const fails = new Map();
 const WINDOW = 10 * 60 * 1000;
@@ -62,7 +57,9 @@ function safeEqual(a, b) {
 }
 
 function clientIp(req) {
-  return String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "")
+  return String(
+    req.headers["x-forwarded-for"] || req.socket.remoteAddress || ""
+  )
     .split(",")[0]
     .trim();
 }
@@ -73,7 +70,11 @@ function text(res, code, message) {
 
 function auth(req, res, next) {
   if (!ADMIN_PASSWORD) {
-    return text(res, 503, "ADMIN_PASSWORD созланмаган. Уни .env файлига қўшинг.");
+    return text(
+      res,
+      503,
+      "ADMIN_PASSWORD созланмаган. Render Environment'да созланг."
+    );
   }
 
   const ip = clientIp(req);
@@ -81,7 +82,11 @@ function auth(req, res, next) {
   const recent = f && Date.now() - f.at < WINDOW;
 
   if (recent && f.n >= 10) {
-    return text(res, 429, "Жуда кўп уриниш. 10 дақиқадан кейин қайта уриниб кўринг.");
+    return text(
+      res,
+      429,
+      "Жуда кўп уриниш. 10 дақиқадан кейин қайта уриниб кўринг."
+    );
   }
 
   const header = req.headers.authorization || "";
@@ -92,7 +97,6 @@ function auth(req, res, next) {
     const user = i < 0 ? raw : raw.slice(0, i);
     const pass = i < 0 ? "" : raw.slice(i + 1);
 
-    // Телефон биринчи ҳарфни катта қилиб қўйиши мумкин: Admin = admin.
     const okUser = safeEqual(
       user.trim().toLowerCase(),
       ADMIN_USER.toLowerCase()
@@ -107,27 +111,50 @@ function auth(req, res, next) {
     fails.set(ip, { n: (recent ? f.n : 0) + 1, at: Date.now() });
   }
 
-  res.set("WWW-Authenticate", 'Basic realm="Taxi admin", charset="UTF-8"');
+  res.set(
+    "WWW-Authenticate",
+    'Basic realm="Taxi admin", charset="UTF-8"'
+  );
+
   return text(res, 401, "Кириш учун логин ва парол керак.");
 }
 
-/* ---------- маълумотни админ кўриниши ---------- */
+/* ---------- Buyurtma ma'lumotlari ---------- */
 
 function orderView(o) {
-  const slots = o.slots || {};
+  const slots =
+    o.slots && typeof o.slots === "object" ? o.slots : {};
 
   let status = "waiting";
+
   if (o.cancelled) status = "cancelled";
   else if (o.finished) status = "finished";
-  else if (o.currentDriverId) status = "driver";
+  else if (o.currentDriverId != null) status = "driver";
 
-  const current =
-    status === "driver" && o.currentSlot && slots[o.currentSlot]
-      ? slots[o.currentSlot].name
-      : "";
+  let currentDriver = "";
+
+  if (status === "driver") {
+    const currentSlot =
+      o.currentSlot != null ? slots[String(o.currentSlot)] : null;
+
+    if (currentSlot && currentSlot.name) {
+      currentDriver = String(currentSlot.name);
+    } else {
+      const matchingDriver = Object.values(slots).find(
+        (driver) =>
+          driver &&
+          String(driver.id) === String(o.currentDriverId) &&
+          driver.name
+      );
+
+      if (matchingDriver) {
+        currentDriver = String(matchingDriver.name);
+      }
+    }
+  }
 
   return {
-    id: o.orderId,
+    id: o.orderId || "",
     name: o.name || "",
     phone: o.phone || "",
     telegram: tgKey(o.telegramUsername),
@@ -135,9 +162,14 @@ function orderView(o) {
     destination: o.destination || "",
     note: o.note || "",
     createdAt: o.createdAt || "",
-    status,
-    currentDriver: current,
-    drivers: [1, 2, 3].map((n) => (slots[n] ? slots[n].name : "")),
+    status: status,
+    currentDriver: currentDriver,
+
+    drivers: [1, 2, 3].map((n) => {
+      const driver = slots[String(n)];
+      return driver && driver.name ? String(driver.name) : "";
+    }),
+
     blocked: isBlocked(o.phone, o.telegramUsername)
   };
 }
@@ -145,14 +177,17 @@ function orderView(o) {
 function buildState(orders) {
   const views = [...orders.values()]
     .map(orderView)
-    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+    .sort((a, b) =>
+      String(a.createdAt).localeCompare(String(b.createdAt))
+    );
 
   const clients = new Map();
 
   views.forEach((o) => {
     const key = phoneKey(o.phone) || o.phone;
+
     const c = clients.get(key) || {
-      key,
+      key: key,
       name: "",
       phone: o.phone,
       telegram: "",
@@ -166,6 +201,7 @@ function buildState(orders) {
     c.phone = o.phone;
     c.telegram = o.telegram || c.telegram;
     c.lastAt = o.createdAt;
+
     clients.set(key, c);
   });
 
@@ -195,35 +231,28 @@ function buildState(orders) {
     };
   });
 
-  return { orders: views, clients: list, blockedCount: store.getBlocked().length };
+  return {
+    orders: views,
+    clients: list,
+    blockedCount: store.getBlocked().length
+  };
 }
 
-/* ---------- маршрутлар ---------- */
+/* ---------- Admin routes ---------- */
 
 function setupAdmin(app, { orders, cancelOrder }) {
-  // Созламани текшириш саҳифаси (парол кўрсатилмайди, фақат узунлиги).
-  // Сайт ишлаб бўлгач, шу блокни ўчириб ташланг.
-  app.get("/admin-check", (_req, res) => {
-    res.set("Cache-Control", "no-store");
-    res.json({
-      parolBelgilangan: RAW_PASSWORD.length > 0,
-      parolUzunligi: ADMIN_PASSWORD.length,
-      parolUzunligiBoshJoyBilan: RAW_PASSWORD.length,
-      loginUzunligi: ADMIN_USER.length,
-      loginOzgaruvchisiBor: Boolean(process.env.ADMIN_USER),
-      loginBoshHarf: ADMIN_USER.slice(0, 1)
-    });
-  });
-
   const r = express.Router();
 
   r.use(auth);
 
-  // POST фақат JSON билан: бошқа сайтдан юборилган форма ўтмайди.
   r.use((req, res, next) => {
     if (req.method !== "GET" && !req.is("application/json")) {
-      return res.status(415).json({ ok: false, message: "JSON керак." });
+      return res.status(415).json({
+        ok: false,
+        message: "JSON керак."
+      });
     }
+
     next();
   });
 
@@ -243,22 +272,24 @@ function setupAdmin(app, { orders, cancelOrder }) {
     const key = phoneKey(phone);
 
     if (key.length < 7) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Телефон рақами нотўғри." });
+      return res.status(400).json({
+        ok: false,
+        message: "Телефон рақами нотўғри."
+      });
     }
 
     const list = store.getBlocked().filter((x) => x.key !== key);
 
     if (list.length >= 5000) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Блок рўйхати тўлган." });
+      return res.status(400).json({
+        ok: false,
+        message: "Блок рўйхати тўлган."
+      });
     }
 
     list.push({
-      key,
-      phone,
+      key: key,
+      phone: phone,
       name: clean(b.name, 80),
       tg: tgKey(b.telegram),
       reason: clean(b.reason, 120),
@@ -271,7 +302,11 @@ function setupAdmin(app, { orders, cancelOrder }) {
 
   r.post("/api/unblock", (req, res) => {
     const key = clean((req.body || {}).key, 20);
-    store.setBlocked(store.getBlocked().filter((x) => x.key !== key));
+
+    store.setBlocked(
+      store.getBlocked().filter((x) => x.key !== key)
+    );
+
     res.json({ ok: true });
   });
 
@@ -279,15 +314,17 @@ function setupAdmin(app, { orders, cancelOrder }) {
     const order = orders.get(req.params.id);
 
     if (!order) {
-      return res
-        .status(404)
-        .json({ ok: false, message: "Буюртма топилмади." });
+      return res.status(404).json({
+        ok: false,
+        message: "Буюртма топилмади."
+      });
     }
 
     if (order.finished) {
-      return res
-        .status(409)
-        .json({ ok: false, message: "Бу буюртма аллақачон ёпилган." });
+      return res.status(409).json({
+        ok: false,
+        message: "Бу буюртма аллақачон ёпилган."
+      });
     }
 
     try {
@@ -295,12 +332,22 @@ function setupAdmin(app, { orders, cancelOrder }) {
       store.saveOrders();
       res.json({ ok: true });
     } catch (err) {
-      console.error("Буюртмани бекор қилиш хатоси:", err.message);
-      res.status(500).json({ ok: false, message: "Бекор қилинмади." });
+      console.error(
+        "Буюртмани бекор қилиш хатоси:",
+        err.message
+      );
+
+      res.status(500).json({
+        ok: false,
+        message: "Бекор қилинмади."
+      });
     }
   });
 
   app.use("/admin", r);
 }
 
-module.exports = { setupAdmin, isBlocked };
+module.exports = {
+  setupAdmin,
+  isBlocked
+};
