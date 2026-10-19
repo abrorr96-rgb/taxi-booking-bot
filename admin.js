@@ -5,8 +5,10 @@ const path = require("path");
 const express = require("express");
 const store = require("./store");
 
-const ADMIN_USER = process.env.ADMIN_USER || "admin";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+// Render'га қўлда ёзилганда пайдо бўладиган бўш жойлар олиб ташланади.
+const RAW_PASSWORD = String(process.env.ADMIN_PASSWORD || "");
+const ADMIN_USER = String(process.env.ADMIN_USER || "admin").trim();
+const ADMIN_PASSWORD = RAW_PASSWORD.trim();
 const PAGE = path.join(__dirname, "admin.html");
 
 function clean(value, max) {
@@ -90,7 +92,11 @@ function auth(req, res, next) {
     const user = i < 0 ? raw : raw.slice(0, i);
     const pass = i < 0 ? "" : raw.slice(i + 1);
 
-    const okUser = safeEqual(user, ADMIN_USER);
+    // Телефон биринчи ҳарфни катта қилиб қўйиши мумкин: Admin = admin.
+    const okUser = safeEqual(
+      user.trim().toLowerCase(),
+      ADMIN_USER.toLowerCase()
+    );
     const okPass = safeEqual(pass, ADMIN_PASSWORD);
 
     if (okUser && okPass) {
@@ -195,6 +201,20 @@ function buildState(orders) {
 /* ---------- маршрутлар ---------- */
 
 function setupAdmin(app, { orders, cancelOrder }) {
+  // Созламани текшириш саҳифаси (парол кўрсатилмайди, фақат узунлиги).
+  // Сайт ишлаб бўлгач, шу блокни ўчириб ташланг.
+  app.get("/admin-check", (_req, res) => {
+    res.set("Cache-Control", "no-store");
+    res.json({
+      parolBelgilangan: RAW_PASSWORD.length > 0,
+      parolUzunligi: ADMIN_PASSWORD.length,
+      parolUzunligiBoshJoyBilan: RAW_PASSWORD.length,
+      loginUzunligi: ADMIN_USER.length,
+      loginOzgaruvchisiBor: Boolean(process.env.ADMIN_USER),
+      loginBoshHarf: ADMIN_USER.slice(0, 1)
+    });
+  });
+
   const r = express.Router();
 
   r.use(auth);
