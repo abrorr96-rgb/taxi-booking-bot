@@ -1,14 +1,12 @@
-Siz `store.js` o'rniga yana `server.js` ni yubordingiz. Uni ham tekshirdim, kamchiliklarni tuzatib, to'liq yangilangan kodni pastga qo'ydim. `store.js` ni hali ko'rmadim, uni oxirida so'rayman.
-Kod ichiga yozilgan "kamchili bolsa togrilab yubor..." qatori funksiya o'rtasida qolib ketgan edi. Uni olib tashladim, yangi kodda u yo'q.
-Topilgan kamchiliklar
-1. Fayllar saytdan ochilib qolardi. `express.static(__dirname)` tufayli `/server.js` va `/package.json` ochilardi. Endi faqat `index.html`, `app.js` va `style.css` beriladi.
-2. Buyurtma spamidan himoya yo'q edi. Kimdir `/api/orders` ga yuzlab so'rov yuborib guruhni to'ldirishi mumkin edi. Endi bir IP'dan 10 daqiqada 5 tagacha buyurtma qabul qilinadi.
-3. Telefon tekshirilmasdi. "x" yozib ham buyurtma berish va blokdan qochish mumkin edi. Endi telefonda kamida 9 ta raqam bo'lishi shart.
-4. `/start` bosgan haydovchilar ro'yxati xotirada edi. Server qayta ishga tushsa (Render'da tez-tez bo'ladi), hamma haydovchi "start bosmagan" deb o'tkazib yuborilardi. Endi bu oldindan tekshirilmaydi, to'g'ridan-to'g'ri xabar yuboriladi. Haydovchi `/start` bosmagan bo'lsa, Telegram xato qaytaradi va navbat baribir keyingisiga o'tadi.
-5. Buyurtma ID'si takrorlanishi mumkin edi. Eski usul ~28 soatda aylanib qolardi. Endi ID tasodifiy (`TX-A1B2C3D4`).
-6. Xavfsiz o'chirish yo'q edi. Render qayta deploy qilganda bot ikki nusxada ishlab, `409` xatosi chiqishi mumkin edi. Endi `SIGTERM` da polling to'xtaydi va buyurtmalar saqlanadi.
-7. Xatolar serverni qulatishi mumkin edi. `unhandledRejection` va noto'g'ri JSON uchun ishlov berish qo'shildi.
-8. Render orqasida IP noto'g'ri aniqlanardi. `trust proxy` qo'shildi.
+Ikkala faylni ham tekshirdim. Kodning asosi yaxshi, lekin bir nechta nozik xato topdim va tuzatdim.
+`server.js` dagi xatolar
+1. "Кейинги ҳайдовчига ўтказиш" tugmasini tez ikki marta bosish. Holat `await` dan keyin o'zgarardi. Ikkinchi bosish keyingi haydovchining navbatini ham o'tkazib yuborardi. Endi holat darhol o'zgaradi.
+2. Haydovchi yuborish paytida qo'shilsa, buyurtma "kutilmoqda" da qolardi. `dispatchNext` band bo'lsa, yangi chaqiruv yo'qolardi. Endi `recheck` belgisi bilan qayta tekshiriladi.
+3. Bekor qilingan buyurtma qayta ochilishi mumkin edi. `dispatchNext` oxirida `finished = false` qilib qo'yardi. Endi `cancelled` tekshiriladi.
+`store.js` dagi xatolar
+1. Signal ishlovchilari to'qnashardi. `store.js` ham `SIGTERM` da `process.exit(0)` chaqirardi, shuning uchun `server.js` dagi `bot.stopPolling()` ulgurmasdi. Endi signalni faqat `server.js` ushlaydi.
+2. `slots` standart qiymati yo'q edi. Fayl shikastlangan bo'lsa, `order.slots[1]` xato berardi. Endi har doim 3 ta slot bo'ladi.
+`Set` ↔ massiv aylantirish (`processedSlots`) `store.js` da to'g'ri yozilgan, uni o'zgartirmadim.
 Yangilangan `server.js`
 
 require("dotenv").config();
@@ -191,70 +189,91 @@ async function sendOrderToDriver(order, driver) {
   });
 }
 
-// Фақат ҳали ишлов берилмаган ҳайдовчига буюртма юборади.
-// Кейинги ҳайдовчи ҳали навбат олмаган бўлса, буюртма очиқ қолади.
+// Битта айланиш: навбатдаги ҳайдовчига буюртма юборади.
+// Хабар бормаса, кейинги ҳайдовчига ўтади.
+async function dispatchOnce(order) {
+  while (true) {
+    if (order.cancelled) return;
+
+    const slot = [1, 2, 3].find(
+      (n) => order.slots[n] && !order.processedSlots.has(n)
+    );
+
+    if (!slot) {
+      const allSlotsFilled = [1, 2, 3].every((n) =>
+        Boolean(order.slots[n])
+      );
+
+      const allProcessed = [1, 2, 3].every((n) =>
+        order.processedSlots.has(n)
+      );
+
+      if (allSlotsFilled && allProcessed) {
+        order.finished = true;
+        order.statusText = "🏁 Барча ҳайдовчилар навбати тугади.";
+      } else {
+        order.finished = false;
+        order.statusText = "🟢 Кейинги ҳайдовчи кутилмоқда.";
+      }
+
+      await updateGroup(order);
+      return;
+    }
+
+    const driver = order.slots[slot];
+
+    try {
+      await sendOrderToDriver(order, driver);
+
+      order.currentSlot = slot;
+      order.currentDriverId = driver.id;
+      order.statusText = `🚕 Буюртма ${driver.name} га юборилди.`;
+
+      await updateGroup(order);
+      return;
+    } catch (err) {
+      console.error(
+        "Ҳайдовчига хабар юборилмади:",
+        driver.name,
+        err.message
+      );
+
+      order.processedSlots.add(slot);
+      order.statusText =
+        `⚠️ ${driver.name} га хабар бормади (ботда /start босмаган бўлиши мумкин). ` +
+        `Кейинги ҳайдовчи текширилмоқда.`;
+
+      await updateGroup(order);
+    }
+  }
+}
+
+// Юбориш жараёнида янги ҳайдовчи қўшилса, жараён тугагач яна текширилади.
 async function dispatchNext(order) {
-  if (order.sending || order.finished || order.currentDriverId) {
+  if (order.sending) {
+    order.recheck = true;
+    return;
+  }
+
+  if (order.cancelled || order.finished || order.currentDriverId) {
     return;
   }
 
   order.sending = true;
 
   try {
-    while (true) {
-      const slot = [1, 2, 3].find(
-        (n) => order.slots[n] && !order.processedSlots.has(n)
-      );
-
-      if (!slot) {
-        const allSlotsFilled = [1, 2, 3].every((n) =>
-          Boolean(order.slots[n])
-        );
-
-        const allProcessed = [1, 2, 3].every((n) =>
-          order.processedSlots.has(n)
-        );
-
-        if (allSlotsFilled && allProcessed) {
-          order.finished = true;
-          order.statusText = "🏁 Барча ҳайдовчилар навбати тугади.";
-        } else {
-          order.finished = false;
-          order.statusText = "🟢 Кейинги ҳайдовчи кутилмоқда.";
-        }
-
-        await updateGroup(order);
-        return;
-      }
-
-      const driver = order.slots[slot];
-
-      try {
-        await sendOrderToDriver(order, driver);
-
-        order.currentSlot = slot;
-        order.currentDriverId = driver.id;
-        order.statusText = `🚕 Буюртма ${driver.name} га юборилди.`;
-
-        await updateGroup(order);
-        return;
-      } catch (err) {
-        console.error(
-          "Ҳайдовчига хабар юборилмади:",
-          driver.name,
-          err.message
-        );
-
-        order.processedSlots.add(slot);
-        order.statusText =
-          `⚠️ ${driver.name} га хабар бормади (ботда /start босмаган бўлиши мумкин). ` +
-          `Кейинги ҳайдовчи текширилмоқда.`;
-
-        await updateGroup(order);
-      }
-    }
+    do {
+      order.recheck = false;
+      await dispatchOnce(order);
+    } while (
+      order.recheck &&
+      !order.cancelled &&
+      !order.finished &&
+      !order.currentDriverId
+    );
   } finally {
     order.sending = false;
+    order.recheck = false;
   }
 }
 
@@ -411,16 +430,17 @@ if (BOT_TOKEN) {
           return;
         }
 
-        await bot.answerCallbackQuery(query.id, {
-          text: "Кейинги ҳайдовчи текширилмоқда."
-        });
-
+        // Ҳолатни ДАРҲОЛ ўзгартирамиз: қўш босишда кейинги ҳайдовчи ўтиб кетмасин.
         if (order.currentSlot !== null) {
           order.processedSlots.add(order.currentSlot);
         }
 
         order.currentSlot = null;
         order.currentDriverId = null;
+
+        await bot.answerCallbackQuery(query.id, {
+          text: "Кейинги ҳайдовчи текширилмоқда."
+        });
 
         await dispatchNext(order);
         return;
@@ -568,7 +588,7 @@ app.get("/", (_req, res) => {
 
 setupAdmin(app, { orders, cancelOrder });
 
-// Хато ушлагич (масалан, noto'g'ri JSON).
+// Хато ушлагич (масалан, нотўғри JSON).
 app.use((err, _req, res, next) => {
   if (res.headersSent) return next(err);
 
@@ -593,7 +613,12 @@ process.on("unhandledRejection", (err) => {
   console.error("Unhandled rejection:", err);
 });
 
+let shuttingDown = false;
+
 function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
   console.log(`${signal} олинди, сервер тўхтатилмоқда...`);
 
   try {
@@ -619,18 +644,132 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`Такси сайти ишга тушди: порт ${PORT}`);
 });
 
-`admin.js` da bitta kichik tuzatish
-Hozir `clientIp` funksiyasi `x-forwarded-for` ning birinchi qiymatini oladi. Uni soxtalashtirish mumkin, shunda parol topishga qarshi himoya (10 ta urinish limiti) aylanib o'tiladi. `admin.js` dagi funksiyani shunday almashtiring (`trust proxy` endi `server.js` da yoqilgan):
+Yangilangan `store.js`
+
+"use strict";
+
+// Буюртмалар ва блокланган мижозлар рўйхатини JSON файлда сақлайди.
+// Файл йўли: DATA_FILE (.env) ёки лойиҳа папкасидаги taxi-data.json.
+// Сигналлар (SIGTERM/SIGINT) бу ерда ушланмайди, уларни server.js бошқаради.
+
+const fs = require("fs");
+const path = require("path");
+
+const FILE = process.env.DATA_FILE || path.join(__dirname, "taxi-data.json");
+
+let blocked = [];
+let ordersRef = null;
+let lastSaved = "";
+
+function freeze(order) {
+  return { ...order, processedSlots: [...(order.processedSlots || [])] };
+}
+
+function revive(order) {
+  return {
+    ...order,
+    slots: { 1: null, 2: null, 3: null, ...(order.slots || {}) },
+    processedSlots: new Set(
+      Array.isArray(order.processedSlots) ? order.processedSlots : []
+    ),
+    sending: false,
+    recheck: false
+  };
+}
+
+function save() {
+  if (!ordersRef) return;
+
+  const text = JSON.stringify({
+    orders: [...ordersRef.values()].map(freeze),
+    blocked
+  });
+
+  if (text === lastSaved) return;
+
+  try {
+    fs.mkdirSync(path.dirname(FILE), { recursive: true });
+    const tmp = `${FILE}.tmp`;
+    fs.writeFileSync(tmp, text);
+    fs.renameSync(tmp, FILE);
+    lastSaved = text;
+  } catch (err) {
+    console.error("Маълумотни сақлаш хатоси:", err.message);
+  }
+}
+
+function loadOrders(map) {
+  ordersRef = map;
+
+  let text;
+  try {
+    text = fs.readFileSync(FILE, "utf8");
+  } catch (_) {
+    return; // Файл ҳали йўқ — биринчи ишга тушиш.
+  }
+
+  try {
+    const data = JSON.parse(text);
+
+    blocked = Array.isArray(data.blocked) ? data.blocked : [];
+
+    (Array.isArray(data.orders) ? data.orders : []).forEach((order) => {
+      if (order && order.orderId) map.set(order.orderId, revive(order));
+    });
+
+    lastSaved = text;
+    console.log(
+      `Файлдан юкланди: ${map.size} та буюртма, ${blocked.length} та блок.`
+    );
+  } catch (err) {
+    const backup = `${FILE}.corrupt-${Date.now()}`;
+    console.error(`Маълумот файли бузилган. Нусха: ${backup}`);
+    try {
+      fs.renameSync(FILE, backup);
+    } catch (_) {}
+  }
+}
+
+function startAutosave(map) {
+  ordersRef = map;
+  setInterval(save, 10000).unref();
+}
+
+function getBlocked() {
+  return blocked;
+}
+
+function setBlocked(list) {
+  blocked = list;
+  save();
+}
+
+module.exports = {
+  loadOrders,
+  saveOrders: save,
+  startAutosave,
+  getBlocked,
+  setBlocked
+};
+
+`admin.js` da
+`clientIp` funksiyasini shunday almashtiring:
 
 function clientIp(req) {
   return req.ip || req.socket.remoteAddress || "";
 }
 
-Yangilagandan keyin tekshiring
-1. GitHub'ga yuklab, Render'da deploy qiling.
-2. `https://taxi-booking-bot-pb3t.onrender.com/server.js` ni oching. Endi 404 chiqishi kerak.
-3. Saytni oching va `index.html` to'g'ri ko'rinayotganini, buyurtma ketayotganini tekshiring. Sahifa "buzuq" (stilsiz) chiqsa, `index.html` boshqa fayllarni ham ishlatayotgan bo'lishi mumkin, ayting.
-4. `/admin` ga kirib, test buyurtmani bloklash va bekor qilishni sinab ko'ring.
-Hali ko'rmagan narsam: `store.js`
-Bu juda muhim. `processedSlots` bu `Set`, JSON'ga yozilganda oddiy `Set` bo'sh obyekt `{}` bo'lib qoladi. `store.js` uni massivga aylantirib saqlamasa va o'qiganda qayta `Set` qilmasa, server qayta ishga tushgandan keyin eski buyurtmalarda `processedSlots.has is not a function` xatosi chiqadi. Bundan tashqari, saqlash fayli Render'da o'chib ketmasligi ham tekshirilishi kerak.
-`store.js` kodini yuboring (token va parollarsiz), uni ham shu tarzda tekshirib beraman.
+Yuklash tartibi
+1. `server.js`, `store.js` va `admin.js` ni bitta commit bilan GitHub'ga yuklang. Fayllar bir-biriga bog'liq, bittasini yangilab qolsangiz, avvalgi kabi qulashi mumkin.
+2. Render'da Events bo'limida deploy Live bo'lishini kuting.
+3. Logs da shu ikki qator chiqishi kerak: `Telegram бот ишга тушди.` va `Такси сайти ишга тушди: порт ...`.
+4. `/server.js` ni oching, 404 chiqishi kerak.
+5. `/admin` ni oching, login va parol so'rashi kerak.
+6. Test buyurtma bering. U guruhga tushib, haydovchi tugmalari ishlashi kerak.
+Hali tasdiqlay olmagan joylar
+• `admin.js` ni ko'rmadim. `server.js` undan `setupAdmin` va `isBlocked` ni kutadi. Agar `admin.js` ularni eksport qilmasa, server ishga tushishda qulaydi. Avvalgi qulashning sababi ham shu bo'lishi mumkin. Shuning uchun `admin.js` ni ham yuboring.
+• Render'dagi proxy soni. `trust proxy` ni `1` qildik, lekin Render oldida bir nechta proxy bo'lishi mumkin. Shunda limit noto'g'ri IP bo'yicha ishlaydi. Buni shunday tekshiring: vaqtincha buyurtma ichida `console.log(req.ip, req.headers["x-forwarded-for"])` yozing va Logs'da farqini ko'ring.
+• Fayl saqlash bepul tarifda ishlamasligi mumkin. Render hujjatlariga ko'ra bepul tarifda fayl tizimi vaqtinchalik: qayta deploy yoki uyqudan uyg'onishda `taxi-data.json` o'chib ketishi mumkin. Unda bloklangan mijozlar ro'yxati ham yo'qoladi. Buni Render hujjatlaridan tekshirib ko'ring. Yechimlar:
+  ▸ Persistent Disk (pullik). Uni ulab, `DATA_FILE=/var/data/taxi-data.json` qo'ying.
+  ▸ Tashqi baza (masalan, MongoDB Atlas yoki Supabase bepul tarifi). Xohlasangiz, `store.js` ni shunga moslab beraman.
+`taxi-data.json` va `.env` ni `.gitignore` ga qo'shishni unutmang, aks holda mijozlar telefon raqamlari GitHub'ga tushib qoladi.
