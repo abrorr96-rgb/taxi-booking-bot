@@ -32,12 +32,7 @@ let bot = null;
 function cleanText(value, maxLength = 200) {
   return String(value || "").trim().slice(0, maxLength);
 }
-function maskContactInNote(note) {
-  return String(note || "").replace(
-    /(@[a-zA-Z0-9_]{5,32}|\d{7,12})/g,
-    (match) => match.slice(0, -4) + "****"
-  );
-}
+
 function getDriverName(user) {
   if (user.username) return `@${user.username}`;
 
@@ -115,12 +110,12 @@ async function updateGroup(order) {
 async function sendOrderToDriver(order, driver) {
   const details =
     `🚕 СИЗГА БУЮРТМА БЕРИЛДИ\n\n` +
-    `🆔 Буюртма: ${maskContactInNote(order.note)}\n` : "") +
+    `🆔 Буюртма: ${order.orderId}\n` +
     `📞 Телефон: ${order.phone}\n` +
     `📍 Қаердан: ${order.pickup}\n` +
     `🏁 Қаерга: ${order.destination}\n` +
     (order.name ? `👤 Исм: ${order.name}\n` : "") +
-    (order.note ? `📝 Изоҳ: ${maskContactInNote(order.note)}\n` : "") +
+    (order.note ? `📝 Изоҳ: ${order.note}\n` : "") +
     `💬 Мижоз Telegram: ${getCustomerTelegram(order.telegramUsername)}\n\n` +
     `Сиз ${driver.slot}-навбатдаги ҳайдовчисиз.`;
 
