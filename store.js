@@ -1,7 +1,656 @@
+Ikkala faylni ham tekshirdim. Kodning asosi yaxshi, lekin bir nechta nozik xato topdim va tuzatdim.
+`server.js` dagi xatolar
+1. "Кейинги ҳайдовчига ўтказиш" tugmasini tez ikki marta bosish. Holat `await` dan keyin o'zgarardi. Ikkinchi bosish keyingi haydovchining navbatini ham o'tkazib yuborardi. Endi holat darhol o'zgaradi.
+2. Haydovchi yuborish paytida qo'shilsa, buyurtma "kutilmoqda" da qolardi. `dispatchNext` band bo'lsa, yangi chaqiruv yo'qolardi. Endi `recheck` belgisi bilan qayta tekshiriladi.
+3. Bekor qilingan buyurtma qayta ochilishi mumkin edi. `dispatchNext` oxirida `finished = false` qilib qo'yardi. Endi `cancelled` tekshiriladi.
+`store.js` dagi xatolar
+1. Signal ishlovchilari to'qnashardi. `store.js` ham `SIGTERM` da `process.exit(0)` chaqirardi, shuning uchun `server.js` dagi `bot.stopPolling()` ulgurmasdi. Endi signalni faqat `server.js` ushlaydi.
+2. `slots` standart qiymati yo'q edi. Fayl shikastlangan bo'lsa, `order.slots[1]` xato berardi. Endi har doim 3 ta slot bo'ladi.
+`Set` ↔ massiv aylantirish (`processedSlots`) `store.js` da to'g'ri yozilgan, uni o'zgartirmadim.
+Yangilangan `server.js`
+
+require("dotenv").config();
+
+const crypto = require("crypto");
+const express = require("express");
+const path = require("path");
+const TelegramBot = require("node-telegram-bot-api");
+const store = require("./store");
+const { setupAdmin, isBlocked } = require("./admin");
+
+const app = express();
+app.set("trust proxy", 1);
+
+const PORT = Number(process.env.PORT || 3000);
+const BOT_TOKEN = process.env.BOT_TOKEN || "";
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || "";
+const WEB_APP_URL = (
+  process.env.WEB_APP_URL ||
+  "https://taxi-booking-bot-pb3t.onrender.com"
+).replace(/\/$/, "");
+
+app.use(express.json({ limit: "100kb" }));
+
+// Фақат сайт учун керакли файллар очилади.
+// Агар index.html да бошқа файллар (расм, иконка) бўлса, шу ерга қўшинг.
+app.get("/app.js", (_req, res) =>
+  res.sendFile(path.join(__dirname, "app.js"))
+);
+app.get("/style.css", (_req, res) =>
+  res.sendFile(path.join(__dirname, "style.css"))
+);
+
+const orders = new Map();
+store.loadOrders(orders);
+store.startAutosave(orders);
+let bot = null;
+
+/* ---------- Ёрдамчи функциялар ---------- */
+
+function cleanText(value, maxLength = 200) {
+  return String(value || "").trim().slice(0, maxLength);
+}
+
+function newOrderId() {
+  let id;
+  do {
+    id = `TX-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+  } while (orders.has(id));
+  return id;
+}
+
+// Битта IP дан 10 дақиқада кўпи билан 5 та буюртма.
+const orderHits = new Map();
+const ORDER_WINDOW_MS = 10 * 60 * 1000;
+const ORDER_MAX_PER_IP = 5;
+
+function orderRateLimited(ip) {
+  const now = Date.now();
+  const hits = (orderHits.get(ip) || []).filter(
+    (t) => now - t < ORDER_WINDOW_MS
+  );
+
+  if (hits.length >= ORDER_MAX_PER_IP) {
+    orderHits.set(ip, hits);
+    return true;
+  }
+
+  hits.push(now);
+  orderHits.set(ip, hits);
+  return false;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, hits] of orderHits) {
+    if (!hits.some((t) => now - t < ORDER_WINDOW_MS)) {
+      orderHits.delete(ip);
+    }
+  }
+}, ORDER_WINDOW_MS).unref();
+
+function getDriverName(user) {
+  if (user.username) return `@${user.username}`;
+
+  return (
+    [user.first_name, user.last_name].filter(Boolean).join(" ") ||
+    `Ҳайдовчи ${user.id}`
+  );
+}
+
+function getCustomerTelegram(value) {
+  const input = cleanText(value, 200);
+  if (!input) return "Кўрсатилмаган";
+
+  const username = input.replace(/^@/, "");
+
+  if (/^[a-zA-Z0-9_]{5,32}$/.test(username)) {
+    return `https://t.me/${username}`;
+  }
+
+  if (/^https:\/\/t\.me\/[a-zA-Z0-9_]+\/?$/.test(input)) {
+    return input;
+  }
+
+  return input;
+}
+
+function getGroupText(order) {
+  const drivers = [1, 2, 3].map((slot) => {
+    const driver = order.slots[slot];
+
+    if (!driver) return `${slot}. ⏳ Бўш`;
+
+    return `${slot}. ${driver.name}`;
+  });
+
+  return (
+    `🚕 ТАКСИ БУЮРТМАСИ\n\n` +
+    `🆔 Буюртма: ${order.orderId}\n` +
+    `📍 Қаердан: ${order.pickup}\n` +
+    `🏁 Қаерга: ${order.destination}\n\n` +
+    `👨‍✈️ Ҳайдовчилар:\n${drivers.join("\n")}\n\n` +
+    `${order.statusText}`
+  );
+}
+
+function getKeyboard(order) {
+  return {
+    inline_keyboard: [
+      [1, 2, 3].map((slot) => ({
+        text: order.slots[slot]
+          ? `${slot}️⃣ ${order.slots[slot].name}`
+          : `${slot}️⃣ Ҳайдовчи`,
+        callback_data: `join:${order.orderId}:${slot}`
+      }))
+    ]
+  };
+}
+
+async function updateGroup(order) {
+  if (!bot || !order.chatId || !order.messageId) return;
+
+  try {
+    await bot.editMessageText(getGroupText(order), {
+      chat_id: order.chatId,
+      message_id: order.messageId,
+      reply_markup: getKeyboard(order)
+    });
+  } catch (err) {
+    if (!String(err.message).includes("message is not modified")) {
+      console.error("Гуруҳни янгилаш хатоси:", err.message);
+    }
+  }
+}
+
+async function sendOrderToDriver(order, driver) {
+  const details =
+    `🚕 СИЗГА БУЮРТМА БЕРИЛДИ\n\n` +
+    `🆔 Буюртма: ${order.orderId}\n` +
+    `📞 Телефон: ${order.phone}\n` +
+    `📍 Қаердан: ${order.pickup}\n` +
+    `🏁 Қаерга: ${order.destination}\n` +
+    (order.name ? `👤 Исм: ${order.name}\n` : "") +
+    (order.note ? `📝 Изоҳ: ${order.note}\n` : "") +
+    `💬 Мижоз Telegram: ${getCustomerTelegram(order.telegramUsername)}\n\n` +
+    `Сиз ${driver.slot}-навбатдаги ҳайдовчисиз.`;
+
+  await bot.sendMessage(driver.id, details, {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: "➡️ Кейинги ҳайдовчига ўтказиш",
+            callback_data: `next:${order.orderId}`
+          }
+        ]
+      ]
+    }
+  });
+}
+
+// Битта айланиш: навбатдаги ҳайдовчига буюртма юборади.
+// Хабар бормаса, кейинги ҳайдовчига ўтади.
+async function dispatchOnce(order) {
+  while (true) {
+    if (order.cancelled) return;
+
+    const slot = [1, 2, 3].find(
+      (n) => order.slots[n] && !order.processedSlots.has(n)
+    );
+
+    if (!slot) {
+      const allSlotsFilled = [1, 2, 3].every((n) =>
+        Boolean(order.slots[n])
+      );
+
+      const allProcessed = [1, 2, 3].every((n) =>
+        order.processedSlots.has(n)
+      );
+
+      if (allSlotsFilled && allProcessed) {
+        order.finished = true;
+        order.statusText = "🏁 Барча ҳайдовчилар навбати тугади.";
+      } else {
+        order.finished = false;
+        order.statusText = "🟢 Кейинги ҳайдовчи кутилмоқда.";
+      }
+
+      await updateGroup(order);
+      return;
+    }
+
+    const driver = order.slots[slot];
+
+    try {
+      await sendOrderToDriver(order, driver);
+
+      order.currentSlot = slot;
+      order.currentDriverId = driver.id;
+      order.statusText = `🚕 Буюртма ${driver.name} га юборилди.`;
+
+      await updateGroup(order);
+      return;
+    } catch (err) {
+      console.error(
+        "Ҳайдовчига хабар юборилмади:",
+        driver.name,
+        err.message
+      );
+
+      order.processedSlots.add(slot);
+      order.statusText =
+        `⚠️ ${driver.name} га хабар бормади (ботда /start босмаган бўлиши мумкин). ` +
+        `Кейинги ҳайдовчи текширилмоқда.`;
+
+      await updateGroup(order);
+    }
+  }
+}
+
+// Юбориш жараёнида янги ҳайдовчи қўшилса, жараён тугагач яна текширилади.
+async function dispatchNext(order) {
+  if (order.sending) {
+    order.recheck = true;
+    return;
+  }
+
+  if (order.cancelled || order.finished || order.currentDriverId) {
+    return;
+  }
+
+  order.sending = true;
+
+  try {
+    do {
+      order.recheck = false;
+      await dispatchOnce(order);
+    } while (
+      order.recheck &&
+      !order.cancelled &&
+      !order.finished &&
+      !order.currentDriverId
+    );
+  } finally {
+    order.sending = false;
+    order.recheck = false;
+  }
+}
+
+// Админ буюртмани бекор қилади: гуруҳ хабари янгиланади, жорий ҳайдовчига хабар кетади.
+async function cancelOrder(order) {
+  order.cancelled = true;
+  order.finished = true;
+  order.statusText = "❌ Буюртма админ томонидан бекор қилинди.";
+
+  if (bot && order.currentDriverId) {
+    try {
+      await bot.sendMessage(
+        order.currentDriverId,
+        `❌ Буюртма ${order.orderId} бекор қилинди.`
+      );
+    } catch (err) {
+      console.error("Ҳайдовчига хабар юборилмади:", err.message);
+    }
+  }
+
+  order.currentDriverId = null;
+  order.currentSlot = null;
+  await updateGroup(order);
+}
+
+/* ---------- Telegram бот ---------- */
+
+if (BOT_TOKEN) {
+  bot = new TelegramBot(BOT_TOKEN, { polling: true });
+
+  bot.onText(/^\/start(?:\s.*)?$/, async (msg) => {
+    try {
+      await bot.sendMessage(
+        msg.chat.id,
+        "Такси буюртма ботига хуш келибсиз!\n\n" +
+          "🚕 Мижозлар, бот орқали таксига буюртма беринг!",
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "🚕 Буюртма бериш",
+                  web_app: { url: WEB_APP_URL }
+                }
+              ],
+              [
+                {
+                  text: "🌐 Сайтни очиш",
+                  url: WEB_APP_URL
+                }
+              ]
+            ]
+          }
+        }
+      );
+    } catch (err) {
+      console.error("/start хатоси:", err.message);
+    }
+  });
+
+  bot.on("callback_query", async (query) => {
+    const data = query.data || "";
+    const user = query.from;
+
+    try {
+      if (!user || !user.id) {
+        await bot.answerCallbackQuery(query.id, {
+          text: "Ҳайдовчи маълумоти топилмади."
+        });
+        return;
+      }
+
+      // Ҳайдовчи 1-, 2- ёки 3-навбатни танлайди.
+      if (data.startsWith("join:")) {
+        const [, orderId, slotText] = data.split(":");
+        const slot = Number(slotText);
+        const order = orders.get(orderId);
+
+        if (!order) {
+          await bot.answerCallbackQuery(query.id, {
+            text: "Буюртма топилмади."
+          });
+          return;
+        }
+
+        if (order.finished) {
+          await bot.answerCallbackQuery(query.id, {
+            text: "Бу буюртманинг навбати тугаган."
+          });
+          return;
+        }
+
+        if (![1, 2, 3].includes(slot)) {
+          await bot.answerCallbackQuery(query.id, {
+            text: "Навбат рақами нотўғри."
+          });
+          return;
+        }
+
+        if (order.slots[slot]) {
+          await bot.answerCallbackQuery(query.id, {
+            text: "Бу навбатни бошқа ҳайдовчи олган."
+          });
+          return;
+        }
+
+        if (
+          Object.values(order.slots).some(
+            (driver) => driver && driver.id === user.id
+          )
+        ) {
+          await bot.answerCallbackQuery(query.id, {
+            text: "Сиз бу буюртмада аллақачон навбат олгансиз."
+          });
+          return;
+        }
+
+        order.slots[slot] = {
+          id: user.id,
+          name: getDriverName(user),
+          slot
+        };
+
+        await bot.answerCallbackQuery(query.id, {
+          text: `${slot}-навбат сизга бириктирилди.`
+        });
+
+        await updateGroup(order);
+
+        // Биринчи навбат олинмагунча буюртма тарқатилмайди.
+        if (order.slots[1] && !order.currentDriverId) {
+          await dispatchNext(order);
+        }
+
+        return;
+      }
+
+      // Ҳозирги ҳайдовчи буюртмани кейингига ўтказади.
+      if (data.startsWith("next:")) {
+        const orderId = data.slice(5);
+        const order = orders.get(orderId);
+
+        if (!order) {
+          await bot.answerCallbackQuery(query.id, {
+            text: "Буюртма топилмади."
+          });
+          return;
+        }
+
+        if (order.currentDriverId !== user.id) {
+          await bot.answerCallbackQuery(query.id, {
+            text: "Ҳозир бу буюртма сизда эмас."
+          });
+          return;
+        }
+
+        // Ҳолатни ДАРҲОЛ ўзгартирамиз: қўш босишда кейинги ҳайдовчи ўтиб кетмасин.
+        if (order.currentSlot !== null) {
+          order.processedSlots.add(order.currentSlot);
+        }
+
+        order.currentSlot = null;
+        order.currentDriverId = null;
+
+        await bot.answerCallbackQuery(query.id, {
+          text: "Кейинги ҳайдовчи текширилмоқда."
+        });
+
+        await dispatchNext(order);
+        return;
+      }
+
+      await bot.answerCallbackQuery(query.id);
+    } catch (err) {
+      console.error("Тугма хатоси:", err.stack || err.message);
+
+      try {
+        await bot.answerCallbackQuery(query.id, {
+          text: "Хатолик юз берди. Қайта уриниб кўринг."
+        });
+      } catch (_) {}
+    }
+  });
+
+  bot.on("polling_error", (err) => {
+    console.error("Telegram polling хатоси:", err.message);
+  });
+
+  console.log("Telegram бот ишга тушди.");
+} else {
+  console.warn("BOT_TOKEN йўқ. Telegram бот ўчирилган.");
+}
+
+/* ---------- Сайт API ---------- */
+
+app.post("/api/orders", async (req, res) => {
+  const body = req.body || {};
+
+  const name = cleanText(body.name, 80);
+  const phone = cleanText(body.phone, 40);
+  const pickup = cleanText(body.pickup, 200);
+  const destination = cleanText(body.destination, 200);
+  const note = cleanText(body.note, 500);
+  const telegramUsername = cleanText(
+    body.telegramUsername || body.telegram,
+    200
+  );
+
+  if (!phone || !pickup || !destination) {
+    return res.status(400).json({
+      ok: false,
+      message:
+        "Телефон рақами, қаердан ва қаерга майдонларини тўлдиринг."
+    });
+  }
+
+  const digits = phone.replace(/\D/g, "");
+
+  if (digits.length < 9 || digits.length > 15) {
+    return res.status(400).json({
+      ok: false,
+      message: "Телефон рақами нотўғри."
+    });
+  }
+
+  if (isBlocked(phone, telegramUsername)) {
+    return res.status(403).json({
+      ok: false,
+      message: "Кечирасиз, ҳозирча буюртмангизни қабул қила олмаймиз."
+    });
+  }
+
+  if (!bot || !ADMIN_CHAT_ID) {
+    return res.status(500).json({
+      ok: false,
+      message: "Бот ёки гуруҳ созламаси топилмади."
+    });
+  }
+
+  if (orderRateLimited(req.ip || "")) {
+    return res.status(429).json({
+      ok: false,
+      message: "Жуда кўп буюртма. Бироз кутиб, қайта уриниб кўринг."
+    });
+  }
+
+  const orderId = newOrderId();
+
+  const order = {
+    orderId,
+    name,
+    phone,
+    pickup,
+    destination,
+    note,
+    telegramUsername,
+
+    slots: {
+      1: null,
+      2: null,
+      3: null
+    },
+
+    processedSlots: new Set(),
+    currentSlot: null,
+    currentDriverId: null,
+    sending: false,
+    finished: false,
+
+    chatId: ADMIN_CHAT_ID,
+    messageId: null,
+    statusText: "🟢 Ҳайдовчилар кутилмоқда",
+    createdAt: new Date().toISOString()
+  };
+
+  try {
+    const sent = await bot.sendMessage(
+      ADMIN_CHAT_ID,
+      getGroupText(order),
+      { reply_markup: getKeyboard(order) }
+    );
+
+    order.messageId = sent.message_id;
+    orders.set(orderId, order);
+    store.saveOrders();
+
+    return res.status(201).json({
+      ok: true,
+      orderId,
+      message: "Буюртмангиз қабул қилинди!"
+    });
+  } catch (err) {
+    console.error("Гуруҳга буюртма юборилмади:", err.message);
+
+    return res.status(502).json({
+      ok: false,
+      message: "Буюртма гуруҳга юборилмади. Қайта уриниб кўринг."
+    });
+  }
+});
+
+app.get("/api/health", (_req, res) => {
+  res.json({
+    ok: true,
+    botEnabled: Boolean(bot)
+  });
+});
+
+app.get("/", (_req, res) => {
+  res.sendFile(path.join(__dirname, "index.html"));
+});
+
+setupAdmin(app, { orders, cancelOrder });
+
+// Хато ушлагич (масалан, нотўғри JSON).
+app.use((err, _req, res, next) => {
+  if (res.headersSent) return next(err);
+
+  if (err && err.type === "entity.parse.failed") {
+    return res.status(400).json({
+      ok: false,
+      message: "JSON нотўғри."
+    });
+  }
+
+  console.error("Сервер хатоси:", err && err.message);
+
+  return res.status(500).json({
+    ok: false,
+    message: "Сервер хатоси."
+  });
+});
+
+/* ---------- Ишга тушириш ва тўхтатиш ---------- */
+
+process.on("unhandledRejection", (err) => {
+  console.error("Unhandled rejection:", err);
+});
+
+let shuttingDown = false;
+
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  console.log(`${signal} олинди, сервер тўхтатилмоқда...`);
+
+  try {
+    store.saveOrders();
+  } catch (err) {
+    console.error("Сақлаш хатоси:", err.message);
+  }
+
+  const done = () => process.exit(0);
+  setTimeout(done, 5000).unref();
+
+  if (bot) {
+    Promise.resolve(bot.stopPolling()).catch(() => {}).then(done);
+  } else {
+    done();
+  }
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Такси сайти ишга тушди: порт ${PORT}`);
+});
+
+Yangilangan `store.js`
+
 "use strict";
 
 // Буюртмалар ва блокланган мижозлар рўйхатини JSON файлда сақлайди.
 // Файл йўли: DATA_FILE (.env) ёки лойиҳа папкасидаги taxi-data.json.
+// Сигналлар (SIGTERM/SIGINT) бу ерда ушланмайди, уларни server.js бошқаради.
 
 const fs = require("fs");
 const path = require("path");
@@ -19,10 +668,12 @@ function freeze(order) {
 function revive(order) {
   return {
     ...order,
+    slots: { 1: null, 2: null, 3: null, ...(order.slots || {}) },
     processedSlots: new Set(
       Array.isArray(order.processedSlots) ? order.processedSlots : []
     ),
-    sending: false
+    sending: false,
+    recheck: false
   };
 }
 
@@ -81,16 +732,7 @@ function loadOrders(map) {
 
 function startAutosave(map) {
   ordersRef = map;
-
-  setInterval(save, 10000);
-
-  const flush = () => {
-    save();
-    process.exit(0);
-  };
-
-  process.on("SIGTERM", flush);
-  process.on("SIGINT", flush);
+  setInterval(save, 10000).unref();
 }
 
 function getBlocked() {
@@ -109,3 +751,25 @@ module.exports = {
   getBlocked,
   setBlocked
 };
+
+`admin.js` da
+`clientIp` funksiyasini shunday almashtiring:
+
+function clientIp(req) {
+  return req.ip || req.socket.remoteAddress || "";
+}
+
+Yuklash tartibi
+1. `server.js`, `store.js` va `admin.js` ni bitta commit bilan GitHub'ga yuklang. Fayllar bir-biriga bog'liq, bittasini yangilab qolsangiz, avvalgi kabi qulashi mumkin.
+2. Render'da Events bo'limida deploy Live bo'lishini kuting.
+3. Logs da shu ikki qator chiqishi kerak: `Telegram бот ишга тушди.` va `Такси сайти ишга тушди: порт ...`.
+4. `/server.js` ni oching, 404 chiqishi kerak.
+5. `/admin` ni oching, login va parol so'rashi kerak.
+6. Test buyurtma bering. U guruhga tushib, haydovchi tugmalari ishlashi kerak.
+Hali tasdiqlay olmagan joylar
+• `admin.js` ni ko'rmadim. `server.js` undan `setupAdmin` va `isBlocked` ni kutadi. Agar `admin.js` ularni eksport qilmasa, server ishga tushishda qulaydi. Avvalgi qulashning sababi ham shu bo'lishi mumkin. Shuning uchun `admin.js` ni ham yuboring.
+• Render'dagi proxy soni. `trust proxy` ni `1` qildik, lekin Render oldida bir nechta proxy bo'lishi mumkin. Shunda limit noto'g'ri IP bo'yicha ishlaydi. Buni shunday tekshiring: vaqtincha buyurtma ichida `console.log(req.ip, req.headers["x-forwarded-for"])` yozing va Logs'da farqini ko'ring.
+• Fayl saqlash bepul tarifda ishlamasligi mumkin. Render hujjatlariga ko'ra bepul tarifda fayl tizimi vaqtinchalik: qayta deploy yoki uyqudan uyg'onishda `taxi-data.json` o'chib ketishi mumkin. Unda bloklangan mijozlar ro'yxati ham yo'qoladi. Buni Render hujjatlaridan tekshirib ko'ring. Yechimlar:
+  ▸ Persistent Disk (pullik). Uni ulab, `DATA_FILE=/var/data/taxi-data.json` qo'ying.
+  ▸ Tashqi baza (masalan, MongoDB Atlas yoki Supabase bepul tarifi). Xohlasangiz, `store.js` ni shunga moslab beraman.
+`taxi-data.json` va `.env` ni `.gitignore` ga qo'shishni unutmang, aks holda mijozlar telefon raqamlari GitHub'ga tushib qoladi.
