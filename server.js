@@ -28,17 +28,14 @@ store.loadOrders(orders);
 store.startAutosave(orders);
 const startedDrivers = new Set();
 let bot = null;
-function maskContactInNote(note) {
-  return String(note || "").replace(
-    /@[a-zA-Z0-9_]{5,32}|\d{9}|\d{12}/g,
-    (match) => {
-      if (match.startsWith("@")) {
-        return match.slice(0, -2) + "**";
-      }
-      return match.slice(0, -4) + "****";
-    }
-  );
+
+function cleanText(value, maxLength = 200) {
+  return String(value || "").trim().slice(0, maxLength);
 }
+
+function getDriverName(user) {
+  if (user.username) return `@${user.username}`;
+
   return (
     [user.first_name, user.last_name].filter(Boolean).join(" ") ||
     `Ҳайдовчи ${user.id}`
@@ -70,7 +67,7 @@ function getGroupText(order) {
 
     return `${slot}. ${driver.name}`;
   });
-(order.note ? `📝 Изоҳ: ${maskContactInNote(order.note)}\n\n` : "") +
+
   return (
     `🚕 ТАКСИ БУЮРТМАСИ\n\n` +
     `🆔 Буюртма: ${order.orderId}\n` +
