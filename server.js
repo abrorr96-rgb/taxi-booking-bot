@@ -115,7 +115,7 @@ async function updateGroup(order) {
 async function sendOrderToDriver(order, driver) {
   const details =
     `🚕 СИЗГА БУЮРТМА БЕРИЛДИ\n\n` +
-    `🆔 Буюртма: ${order.orderId}\n` +
+    `🆔 Буюртма: ${maskContactInNote(order.note)}\n` : "") +
     `📞 Телефон: ${order.phone}\n` +
     `📍 Қаердан: ${order.pickup}\n` +
     `🏁 Қаерга: ${order.destination}\n` +
