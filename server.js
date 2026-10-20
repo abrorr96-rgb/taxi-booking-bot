@@ -73,7 +73,6 @@ function getGroupText(order) {
     `🆔 Буюртма: ${order.orderId}\n` +
     `📍 Қаердан: ${order.pickup}\n` +
     `🏁 Қаерга: ${order.destination}\n\n` +
-   `📝 Изоҳ: ${order.note || "Йўқ"}\n\n` +
     `👨‍✈️ Ҳайдовчилар:\n${drivers.join("\n")}\n\n` +
     `${order.statusText}`
   );
@@ -397,45 +396,6 @@ if (BOT_TOKEN) {
           text: "Хатолик юз берди. Қайта уриниб кўринг."
         });
       } catch (_) {}
-    }
-  });
-
-  bot.on("chat_join_request", async (request) => {
-    try {
-      await bot.approveChatJoinRequest(
-        request.chat.id,
-        request.from.id
-      );
-
-      try {
-        await bot.sendMessage(
-          request.user_chat_id,
-          "Такси буюртма ботига хуш келибсиз!\n\n" +
-            "🚕 Мижозлар, бот орқали таксига буюртма беринг!",
-          {
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  {
-                    text: "🚕 Буюртма бериш",
-                    web_app: { url: WEB_APP_URL }
-                  }
-                ],
-                [
-                  {
-                    text: "🌐 Сайтни очиш",
-                    url: WEB_APP_URL
-                  }
-                ]
-              ]
-            }
-          }
-        );
-      } catch (msgErr) {
-        console.log("Хабар юборилмади:", msgErr.message);
-      }
-    } catch (err) {
-      console.error("Заявка хатоси:", err.message);
     }
   });
 
