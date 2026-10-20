@@ -73,6 +73,7 @@ function getGroupText(order) {
     `🆔 Буюртма: ${order.orderId}\n` +
     `📍 Қаердан: ${order.pickup}\n` +
     `🏁 Қаерга: ${order.destination}\n\n` +
+    `📝 Изоҳ: ${safeNote || "Йўқ"}\n\n` +
     `👨‍✈️ Ҳайдовчилар:\n${drivers.join("\n")}\n\n` +
     `${order.statusText}`
   );
